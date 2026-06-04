@@ -6,6 +6,7 @@
 /// client (module 01); Poseidon lives in the commitment tree (module 03). This module does
 /// no hashing and no field math — only structural parsing of raw legacy-serialized txs.
 module utxopia::bitcoin {
+    use std::hash;
     use utxopia::errors;
 
     const OP_RETURN: u8 = 0x6a;
@@ -30,6 +31,11 @@ module utxopia::bitcoin {
 
     fun ensure(data: &vector<u8>, off: u64, need: u64) {
         assert!(off + need <= vector::length(data), errors::tx_truncated());
+    }
+
+    /// Bitcoin double-SHA256 (internal byte order). Binds a raw tx to its proven txid.
+    public(package) fun double_sha256(data: &vector<u8>): vector<u8> {
+        hash::sha2_256(hash::sha2_256(*data))
     }
 
     public(package) fun read_u32_le(data: &vector<u8>, off: u64): u32 {

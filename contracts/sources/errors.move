@@ -29,6 +29,12 @@ module utxopia::errors {
     const E_BATCH_TOO_LARGE: u64 = 28;
     const E_TX_TRUNCATED: u64 = 29;
     const E_INVALID_RAW_TX: u64 = 30;
+    const E_AMOUNT_TOO_SMALL: u64 = 31;
+    const E_AMOUNT_TOO_LARGE: u64 = 32;
+    const E_FEE_EXCEEDS_AMOUNT: u64 = 33;
+    const E_INVALID_STEALTH_OP_RETURN: u64 = 34;
+    const E_UTXO_EXISTS: u64 = 35;
+    const E_DEPOSIT_LINKAGE_FAILED: u64 = 36;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -60,4 +66,10 @@ module utxopia::errors {
     public fun batch_too_large(): u64 { E_BATCH_TOO_LARGE }
     public fun tx_truncated(): u64 { E_TX_TRUNCATED }
     public fun invalid_raw_tx(): u64 { E_INVALID_RAW_TX }
+    public fun amount_too_small(): u64 { E_AMOUNT_TOO_SMALL }
+    public fun amount_too_large(): u64 { E_AMOUNT_TOO_LARGE }
+    public fun fee_exceeds_amount(): u64 { E_FEE_EXCEEDS_AMOUNT }
+    public fun invalid_stealth_op_return(): u64 { E_INVALID_STEALTH_OP_RETURN }
+    public fun utxo_exists(): u64 { E_UTXO_EXISTS }
+    public fun deposit_linkage_failed(): u64 { E_DEPOSIT_LINKAGE_FAILED }
 }

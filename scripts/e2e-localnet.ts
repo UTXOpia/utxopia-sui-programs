@@ -109,7 +109,11 @@ async function main() {
   const adminCap = find("::pool::AdminCap");
   console.log({ pool, tree, registry, utxoSet, light, queue, redCap });
 
-  // ---- Tx1b: pin canonical companion objects to the pool (AdminCap-gated) ----
+  // ---- Tx1b: pin the deposit-path companion objects to the pool (AdminCap-gated) ----
+  // This harness exercises complete_deposit + redemption only, so it pins just the
+  // tree, BTC deposit registry, and UTXO set. transact additionally requires pinned
+  // NullifierRegistry + VerifyingKeyRegistry (this script does not create those);
+  // scripts/init.ts pins the full set of five.
   const tb = new Transaction();
   tb.moveCall({ target: `${PKG}::pool::set_commitment_tree_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(tree)] });
   tb.moveCall({ target: `${PKG}::pool::set_btc_deposit_registry_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(registry)] });

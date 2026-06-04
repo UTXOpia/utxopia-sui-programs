@@ -41,8 +41,9 @@ state.redemptionCap = objectRefFromChange(findCreatedObject(redCh, "::redemption
 const vkCh = call("verifier", "initialize_registry", []);
 state.verifyingKeyRegistry = sharedRefFromChange(findCreatedObject(vkCh, "::verifier::VerifyingKeyRegistry"));
 
-// Pin the canonical companion objects to the pool (AdminCap-gated) so transact/
-// complete_deposit reject any substituted tree/registry/utxo-set.
+// Pin all five canonical companion objects to the pool (AdminCap-gated, set once):
+// commitment tree, nullifier registry, BTC deposit registry, UTXO set, and
+// verifying-key registry — so transact/complete_deposit reject any substitute.
 call("pool", "set_commitment_tree_id", [state.adminCap!.objectId, state.pool!.objectId, state.commitmentTree!.objectId]);
 call("pool", "set_nullifier_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.nullifierRegistry!.objectId]);
 call("pool", "set_btc_deposit_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.btcDepositRegistry!.objectId]);

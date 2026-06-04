@@ -8,7 +8,7 @@ import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
   ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
-  : path.resolve(ROOT, "../utxopia-circuits/circuits");
+  : path.resolve(ROOT, "../utxopia-circuits");
 const objectId = `0x${"1".padStart(64, "0")}`;
 
 async function main() {
@@ -83,7 +83,7 @@ async function verifySuiVkeyExport(): Promise<string> {
     "run",
     "--quiet",
     "--manifest-path",
-    path.join(ROOT, "tools/sui-groth16-exporter/Cargo.toml"),
+    path.join(ROOT, "../utxopia-circuits/sui-groth16-exporter/Cargo.toml"),
     "--",
     "vkey",
     "--input",

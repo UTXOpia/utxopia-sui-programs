@@ -6,7 +6,7 @@ import { existsSync, unlinkSync } from "node:fs";
 
 const network = process.env.UTXOPIA_SUI_NETWORK ?? "testnet";
 const gasBudget = process.env.UTXOPIA_SUI_GAS_BUDGET ?? "200000000";
-const packagePath = path.join(ROOT, "chains/sui/contracts");
+const packagePath = path.join(ROOT, "contracts");
 const publishedFile = path.join(packagePath, "Published.toml");
 
 if (existsSync(publishedFile)) {

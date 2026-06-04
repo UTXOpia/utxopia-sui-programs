@@ -15,13 +15,13 @@ const nInputs = Number(match[1]);
 const nOutputs = Number(match[2]);
 const circuitsDir = process.env.UTXOPIA_CIRCUITS_DIR
   ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
-  : path.resolve(ROOT, "../utxopia-circuits/circuits");
+  : path.resolve(ROOT, "../utxopia-circuits");
 const vkeyPath = path.join(circuitsDir, "build", circuit, `${circuit}.vkey.json`);
 const exportResult = spawnSync("cargo", [
   "run",
   "--quiet",
   "--manifest-path",
-  path.join(ROOT, "tools/sui-groth16-exporter/Cargo.toml"),
+  path.join(ROOT, "../utxopia-circuits/sui-groth16-exporter/Cargo.toml"),
   "--",
   "vkey",
   "--input",

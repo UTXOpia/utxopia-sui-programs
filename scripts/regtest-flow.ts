@@ -30,7 +30,7 @@ import { loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
 
 const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
   ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
-  : path.resolve(ROOT, "../utxopia-circuits/circuits");
+  : path.resolve(ROOT, "../utxopia-circuits");
 const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
 const TREE_DEPTH = 16;
 const ZKBTC_TOKEN_ID = 0x7a627463n;
@@ -384,7 +384,7 @@ function generateProof(circuit: string, inputs: Record<string, unknown>) {
     throw new Error(`Missing circuit zkey: ${zkeyPath}`);
   }
 
-  const tmpDir = path.join(ROOT, "chains/sui/.tmp", `regtest-flow-${Date.now()}`);
+  const tmpDir = path.join(ROOT, ".tmp", `regtest-flow-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
   const inputPath = path.join(tmpDir, "input.json");
   const proofPath = path.join(tmpDir, "proof.json");
@@ -451,7 +451,7 @@ function exportSuiProof(proofPath: string, publicPath: string): {
     "run",
     "--quiet",
     "--manifest-path",
-    path.join(ROOT, "tools/sui-groth16-exporter/Cargo.toml"),
+    path.join(ROOT, "../utxopia-circuits/sui-groth16-exporter/Cargo.toml"),
     "--",
     "proof",
     "--proof",

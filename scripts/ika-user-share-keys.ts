@@ -5,7 +5,7 @@ import { Curve, UserShareEncryptionKeys } from "@ika.xyz/sdk";
 import { ROOT } from "./shared";
 
 export async function loadOrCreateIkaUserShareKeys(): Promise<UserShareEncryptionKeys> {
-  const secretPath = path.join(ROOT, "chains/sui/.secrets/ika-user-share-keys.hex");
+  const secretPath = path.join(ROOT, ".secrets/ika-user-share-keys.hex");
   const envSeed = process.env.UTXOPIA_SUI_IKA_USER_SHARE_SEED_HEX;
   const envKeys = process.env.UTXOPIA_SUI_IKA_USER_SHARE_KEYS_HEX;
 

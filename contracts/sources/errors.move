@@ -27,6 +27,8 @@ module utxopia::errors {
     const E_LC_PAUSED: u64 = 26;
     const E_BAD_HEADER_LEN: u64 = 27;
     const E_BATCH_TOO_LARGE: u64 = 28;
+    const E_TX_TRUNCATED: u64 = 29;
+    const E_INVALID_RAW_TX: u64 = 30;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -56,4 +58,6 @@ module utxopia::errors {
     public fun lc_paused(): u64 { E_LC_PAUSED }
     public fun bad_header_len(): u64 { E_BAD_HEADER_LEN }
     public fun batch_too_large(): u64 { E_BATCH_TOO_LARGE }
+    public fun tx_truncated(): u64 { E_TX_TRUNCATED }
+    public fun invalid_raw_tx(): u64 { E_INVALID_RAW_TX }
 }

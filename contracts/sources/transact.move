@@ -1,13 +1,14 @@
 module utxopia::transact {
+    use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
     use utxopia::events;
-    use utxopia::merkle;
     use utxopia::nullifier::{Self, NullifierRegistry};
     use utxopia::pool::{Self, Pool};
     use utxopia::verifier::{Self, VerifyingKeyRegistry};
 
     public fun transact(
-        pool: &mut Pool,
+        pool: &Pool,
+        tree: &mut CommitmentTree,
         nullifiers: &mut NullifierRegistry,
         vk_registry: &VerifyingKeyRegistry,
         n_inputs: u8,
@@ -21,8 +22,14 @@ module utxopia::transact {
         pool::assert_not_paused(pool);
         assert!(nullifiers_in.length() == (n_inputs as u64), errors::invalid_join_split());
         assert!(commitments_out.length() == (n_outputs as u64), errors::invalid_join_split());
-        assert_public_input_at(&public_inputs, 0, &pool::latest_root(pool));
+        // Validates total length (and thus that index 0/1 are present) before slicing.
         assert_bound_public_inputs(&public_inputs, n_inputs, n_outputs, &nullifiers_in, &commitments_out);
+
+        // History-aware Merkle root check: the proof's root (public input 0) must be the
+        // current root OR any recent root, so a deposit landing between proof-gen and
+        // submission does not invalidate an otherwise-valid proof.
+        let proof_root = extract_public_input(&public_inputs, 0);
+        assert!(commitment_tree::is_valid_root_bytes(tree, &proof_root), errors::stale_merkle_root());
 
         let verified = verifier::verify_join_split(
             vk_registry,
@@ -45,7 +52,7 @@ module utxopia::transact {
 
         let mut j = 0;
         while (j < commitments_out.length()) {
-            merkle::insert_commitment(pool, commitments_out[j]);
+            commitment_tree::insert_commitment_bytes(tree, pool_id, commitments_out[j]);
             j = j + 1;
         };
     }
@@ -81,5 +88,16 @@ module utxopia::transact {
             assert!(*public_inputs.borrow(start + i) == *expected.borrow(i), errors::invalid_join_split());
             i = i + 1;
         };
+    }
+
+    fun extract_public_input(public_inputs: &vector<u8>, index: u64): vector<u8> {
+        let start = index * 32;
+        let mut out = vector[];
+        let mut i = 0;
+        while (i < 32) {
+            vector::push_back(&mut out, *public_inputs.borrow(start + i));
+            i = i + 1;
+        };
+        out
     }
 }

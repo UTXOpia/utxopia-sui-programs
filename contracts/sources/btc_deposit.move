@@ -3,6 +3,7 @@ module utxopia::btc_deposit {
     use sui::transfer;
     use sui::tx_context::TxContext;
     use utxopia::btc_light_client::{Self, VerifiedBtcDeposit};
+    use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
     use utxopia::events;
     use utxopia::pool::{Self, Pool};
@@ -25,7 +26,8 @@ module utxopia::btc_deposit {
     }
 
     public fun complete_verified_deposit(
-        pool: &mut Pool,
+        pool: &Pool,
+        tree: &mut CommitmentTree,
         registry: &mut BtcDepositRegistry,
         verified_deposit: VerifiedBtcDeposit,
     ) {
@@ -35,7 +37,7 @@ module utxopia::btc_deposit {
             amount_sats,
             op_return_payload,
             commitment,
-            verified_root,
+            _verified_root, // root is now computed on-chain by the tree, not trusted from input
         ) = btc_light_client::consume_verified_deposit(verified_deposit);
 
         pool::assert_not_paused(pool);
@@ -43,17 +45,19 @@ module utxopia::btc_deposit {
         assert!(vector::length(&deposit_txid) == TXID_LEN, errors::invalid_btc_deposit());
         assert!(vector::length(&op_return_payload) == OP_RETURN_PAYLOAD_LEN, errors::invalid_btc_deposit());
         assert!(vector::length(&commitment) == FIELD_BYTES_LEN, errors::invalid_commitment());
-        assert!(vector::length(&verified_root) == FIELD_BYTES_LEN, errors::invalid_commitment());
 
         let claim_key = outpoint_key(&deposit_txid, deposit_vout);
         assert!(!contains_claim(registry, &claim_key), errors::btc_deposit_already_claimed());
         vector::push_back(&mut registry.claimed_outpoints, claim_key);
 
-        let leaf_index = pool::next_leaf_index(pool);
+        let pool_id = pool::pool_id(pool);
         let ephemeral_pubkey = copy_range(&op_return_payload, 0, 32);
         let npk = copy_range(&op_return_payload, 32, 64);
-        let pool_id = pool::pool_id(pool);
 
+        // Emit the stealth announcement with the leaf index the commitment will occupy,
+        // then insert into the real Poseidon tree (which emits commitment_inserted +
+        // merkle_root_updated and computes the new root on-chain).
+        let leaf_index = commitment_tree::next_index(tree);
         events::btc_deposit_verified(
             pool_id,
             leaf_index,
@@ -64,9 +68,7 @@ module utxopia::btc_deposit {
             npk,
             commitment,
         );
-        events::commitment_inserted(pool_id, leaf_index, commitment);
-        pool::increment_leaf_index(pool);
-        pool::set_latest_root(pool, verified_root);
+        commitment_tree::insert_commitment_bytes(tree, pool_id, commitment);
     }
 
     public fun claimed_count(registry: &BtcDepositRegistry): u64 {

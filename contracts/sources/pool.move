@@ -6,33 +6,27 @@ module utxopia::pool {
     use utxopia::events;
 
     const PROTOCOL_VERSION: u64 = 1;
-    const FIELD_BYTES_LEN: u64 = 32;
 
     public struct AdminCap has key {
         id: UID,
     }
 
+    /// Pool state. The Merkle root and leaf count now live in `commitment_tree`
+    /// (the single source of truth); `Pool` only holds policy/admin state.
     public struct Pool has key {
         id: UID,
         tree_depth: u64,
         paused: bool,
-        latest_root: vector<u8>,
-        latest_root_index: u64,
-        next_leaf_index: u64,
         next_redemption_id: u64,
     }
 
-    public fun initialize(tree_depth: u64, initial_root: vector<u8>, ctx: &mut TxContext) {
+    public fun initialize(tree_depth: u64, ctx: &mut TxContext) {
         assert!(tree_depth > 0, errors::invalid_tree_depth());
-        assert!(vector::length(&initial_root) == FIELD_BYTES_LEN, errors::invalid_commitment());
 
         let pool = Pool {
             id: object::new(ctx),
             tree_depth,
             paused: false,
-            latest_root: initial_root,
-            latest_root_index: 0,
-            next_leaf_index: 0,
             next_redemption_id: 0,
         };
         let pool_id = object::uid_to_address(&pool.id);
@@ -57,32 +51,10 @@ module utxopia::pool {
         object::uid_to_address(&pool.id)
     }
 
-    public(package) fun next_leaf_index(pool: &Pool): u64 {
-        pool.next_leaf_index
-    }
-
-    public(package) fun increment_leaf_index(pool: &mut Pool) {
-        pool.next_leaf_index = pool.next_leaf_index + 1;
-    }
-
-    public(package) fun set_latest_root(pool: &mut Pool, root: vector<u8>) {
-        pool.latest_root_index = pool.latest_root_index + 1;
-        pool.latest_root = root;
-        events::merkle_root_updated(pool_id(pool), pool.latest_root_index, pool.latest_root);
-    }
-
     public(package) fun allocate_redemption_id(pool: &mut Pool): u64 {
         let redemption_id = pool.next_redemption_id;
         pool.next_redemption_id = redemption_id + 1;
         redemption_id
-    }
-
-    public fun latest_root(pool: &Pool): vector<u8> {
-        pool.latest_root
-    }
-
-    public fun latest_root_index(pool: &Pool): u64 {
-        pool.latest_root_index
     }
 
     public fun tree_depth(pool: &Pool): u64 {

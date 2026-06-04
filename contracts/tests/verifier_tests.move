@@ -10,14 +10,7 @@ module utxopia::verifier_tests {
     fun registers_prepared_key_metadata() {
         let mut scenario = test_scenario::begin(SENDER);
 
-        pool::initialize(
-            16,
-            vector[
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            ],
-            test_scenario::ctx(&mut scenario),
-        );
+        pool::initialize(16, test_scenario::ctx(&mut scenario));
         verifier::initialize_registry(test_scenario::ctx(&mut scenario));
         test_scenario::next_tx(&mut scenario, SENDER);
 

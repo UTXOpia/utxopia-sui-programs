@@ -19,5 +19,8 @@ module utxopia::errors_tests {
         assert!(errors::invalid_join_split() == 13, 0);
         assert!(errors::invalid_btc_deposit() == 14, 0);
         assert!(errors::btc_deposit_already_claimed() == 15, 0);
+        assert!(errors::stale_merkle_root() == 16, 0);
+        assert!(errors::tree_full() == 17, 0);
+        assert!(errors::commitment_out_of_field() == 18, 0);
     }
 }

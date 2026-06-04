@@ -84,6 +84,26 @@ module utxopia::btc_deposit_tests {
         test_scenario::end(scenario);
     }
 
+    #[test, expected_failure(abort_code = 41)] // E_ALREADY_BOUND
+    fun rejects_companion_rebinding() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        bind(&scenario, &mut pool, &tree, &registry, &utxo_set);
+
+        // Re-binding any pinned companion must abort: swapping in a fresh
+        // object would reset spent/claimed state.
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let admin = test_scenario::take_from_sender<AdminCap>(&scenario);
+        pool::set_commitment_tree_id(&admin, &mut pool, object::id(&registry));
+        abort 0
+    }
+
     #[test, expected_failure(abort_code = 15)]
     fun rejects_duplicate_deposit() {
         let mut scenario = test_scenario::begin(SENDER);

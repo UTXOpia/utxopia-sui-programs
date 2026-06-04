@@ -39,6 +39,7 @@ module utxopia::errors {
     const E_APPROVAL_EXPIRED: u64 = 38;
     const E_WRONG_CAP: u64 = 39;
     const E_WRONG_OBJECT: u64 = 40;
+    const E_ALREADY_BOUND: u64 = 41;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -80,4 +81,5 @@ module utxopia::errors {
     public fun approval_expired(): u64 { E_APPROVAL_EXPIRED }
     public fun wrong_cap(): u64 { E_WRONG_CAP }
     public fun wrong_object(): u64 { E_WRONG_OBJECT }
+    public fun already_bound(): u64 { E_ALREADY_BOUND }
 }

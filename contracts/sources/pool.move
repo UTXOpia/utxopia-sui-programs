@@ -101,25 +101,33 @@ module utxopia::pool {
     }
 
     // --- canonical companion binding (AdminCap-gated, set once each) ---
+    // Set-once is enforced: re-binding aborts. Swapping in a fresh companion
+    // (e.g. an empty NullifierRegistry) would reset spent state and re-enable
+    // double-spends, so the binding is immutable after initial pinning.
 
     public fun set_commitment_tree_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
         assert_admin(cap, pool);
+        assert!(option::is_none(&pool.commitment_tree_id), errors::already_bound());
         pool.commitment_tree_id = option::some(id);
     }
     public fun set_nullifier_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
         assert_admin(cap, pool);
+        assert!(option::is_none(&pool.nullifier_registry_id), errors::already_bound());
         pool.nullifier_registry_id = option::some(id);
     }
     public fun set_btc_deposit_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
         assert_admin(cap, pool);
+        assert!(option::is_none(&pool.btc_deposit_registry_id), errors::already_bound());
         pool.btc_deposit_registry_id = option::some(id);
     }
     public fun set_utxo_set_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
         assert_admin(cap, pool);
+        assert!(option::is_none(&pool.utxo_set_id), errors::already_bound());
         pool.utxo_set_id = option::some(id);
     }
     public fun set_vk_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
         assert_admin(cap, pool);
+        assert!(option::is_none(&pool.vk_registry_id), errors::already_bound());
         pool.vk_registry_id = option::some(id);
     }
 

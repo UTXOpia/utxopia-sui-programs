@@ -41,6 +41,14 @@ state.redemptionCap = objectRefFromChange(findCreatedObject(redCh, "::redemption
 const vkCh = call("verifier", "initialize_registry", []);
 state.verifyingKeyRegistry = sharedRefFromChange(findCreatedObject(vkCh, "::verifier::VerifyingKeyRegistry"));
 
+// Pin the canonical companion objects to the pool (AdminCap-gated) so transact/
+// complete_deposit reject any substituted tree/registry/utxo-set.
+call("pool", "set_commitment_tree_id", [state.adminCap!.objectId, state.pool!.objectId, state.commitmentTree!.objectId]);
+call("pool", "set_nullifier_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.nullifierRegistry!.objectId]);
+call("pool", "set_btc_deposit_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.btcDepositRegistry!.objectId]);
+call("pool", "set_utxo_set_id", [state.adminCap!.objectId, state.pool!.objectId, state.utxoSet!.objectId]);
+call("pool", "set_vk_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.verifyingKeyRegistry!.objectId]);
+
 // NOTE: btc_light_client::initialize is a separate, network-specific bootstrap (it anchors
 // a trusted checkpoint header + chainwork) driven by the header relayer — analogous to the
 // standalone btc-light-client program on Solana. See scripts/e2e-localnet.ts for the full

@@ -106,7 +106,15 @@ async function main() {
   const light = find("::btc_light_client::LightClient");
   const queue = find("::redemption::RedemptionQueue");
   const redCap = find("::redemption::RedemptionCap");
+  const adminCap = find("::pool::AdminCap");
   console.log({ pool, tree, registry, utxoSet, light, queue, redCap });
+
+  // ---- Tx1b: pin canonical companion objects to the pool (AdminCap-gated) ----
+  const tb = new Transaction();
+  tb.moveCall({ target: `${PKG}::pool::set_commitment_tree_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(tree)] });
+  tb.moveCall({ target: `${PKG}::pool::set_btc_deposit_registry_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(registry)] });
+  tb.moveCall({ target: `${PKG}::pool::set_utxo_set_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(utxoSet)] });
+  await exec(tb, "bind canonical objects");
 
   const execExpectAbort = async (tx: Transaction, label: string, code: number) => {
     tx.setGasBudget(1_000_000_000);

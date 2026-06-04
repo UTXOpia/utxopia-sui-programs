@@ -2,10 +2,11 @@
 module utxopia::btc_deposit_tests {
     use sui::test_scenario;
     use sui::clock;
+    use sui::object;
     use utxopia::btc_light_client::{Self as lc, LightClient};
     use utxopia::btc_deposit::{Self, BtcDepositRegistry, UtxoSet};
     use utxopia::commitment_tree::{Self, CommitmentTree};
-    use utxopia::pool::{Self, Pool};
+    use utxopia::pool::{Self, Pool, AdminCap};
 
     const SENDER: address = @0xA11CE;
     const REGTEST: u8 = 2;
@@ -21,6 +22,21 @@ module utxopia::btc_deposit_tests {
         btc_deposit::initialize_utxo_set(test_scenario::ctx(scenario));
     }
 
+    // Pin the canonical companion objects to the pool (AdminCap-gated).
+    fun bind(
+        scenario: &test_scenario::Scenario,
+        pool: &mut Pool,
+        tree: &CommitmentTree,
+        registry: &BtcDepositRegistry,
+        utxo_set: &UtxoSet,
+    ) {
+        let admin = test_scenario::take_from_sender<AdminCap>(scenario);
+        pool::set_commitment_tree_id(&admin, pool, object::id(tree));
+        pool::set_btc_deposit_registry_id(&admin, pool, object::id(registry));
+        pool::set_utxo_set_id(&admin, pool, object::id(utxo_set));
+        test_scenario::return_to_sender(scenario, admin);
+    }
+
     #[test]
     fun completes_deposit_once() {
         let mut scenario = test_scenario::begin(SENDER);
@@ -33,6 +49,7 @@ module utxopia::btc_deposit_tests {
         let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
         let mut light = test_scenario::take_shared<LightClient>(&scenario);
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        bind(&scenario, &mut pool, &tree, &registry, &utxo_set);
 
         // deposit/sweep tx: credited P2TR (vout 0, 50_000) + deposit OP_RETURN (vout 1)
         let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
@@ -79,6 +96,7 @@ module utxopia::btc_deposit_tests {
         let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
         let mut light = test_scenario::take_shared<LightClient>(&scenario);
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        bind(&scenario, &mut pool, &tree, &registry, &utxo_set);
 
         let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
         let sweep_txid = lc::test_double_sha256(sweep_tx);
@@ -93,6 +111,41 @@ module utxopia::btc_deposit_tests {
         // same outpoint again -> E_BTC_DEPOSIT_ALREADY_CLAIMED (15)
         let inc2 = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
         btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc2, sweep_tx, vector[], true, vector[]);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(registry);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 40)]
+    fun rejects_unbound_companions() {
+        // Same happy-path flow but WITHOUT binding the canonical objects: complete_deposit
+        // must fail closed (E_WRONG_OBJECT) rather than credit into an unpinned tree.
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        // (no bind() call on purpose)
+
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_txid = lc::test_double_sha256(sweep_tx);
+        let g = lc::tip_hash(&light);
+        let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
+        lc::submit_headers(&mut light, block, &clk);
+        let block_hash = lc::test_double_sha256(block);
+
+        let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inclusion, sweep_tx, vector[], true, vector[]); // aborts 40
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);

@@ -50,7 +50,7 @@ module utxopia::ika_policy {
 
     /// Create a single-use, policy-bound SigningApproval for one redemption.
     public fun approve_signing(
-        _cap: &RedemptionCap,
+        cap: &RedemptionCap,
         pool: &Pool,
         queue: &RedemptionQueue,
         dwallet_cap_id: address,
@@ -59,6 +59,7 @@ module utxopia::ika_policy {
         sighash: vector<u8>,
         ctx: &mut TxContext,
     ) {
+        redemption::assert_cap_for_queue(cap, queue);
         assert!(vector::length(&sighash) == SIGHASH_LEN, errors::policy_rejected());
         assert!(redemption::is_pending(queue, redemption_id), errors::policy_rejected());
 
@@ -87,12 +88,13 @@ module utxopia::ika_policy {
     /// this pool, and the redemption is still pending. Composed in the SAME PTB as the Ika
     /// `requestSign` by the off-chain signer so the approval burns atomically with signing.
     public fun consume_approval(
-        _cap: &RedemptionCap,
+        cap: &RedemptionCap,
         pool: &Pool,
         queue: &RedemptionQueue,
         approval: &mut SigningApproval,
         ctx: &TxContext,
     ) {
+        redemption::assert_cap_for_queue(cap, queue);
         assert!(!approval.used, errors::approval_used());
         assert!(approval.pool_id == pool::pool_id(pool), errors::policy_rejected());
         assert!(redemption::is_pending(queue, approval.redemption_id), errors::policy_rejected());

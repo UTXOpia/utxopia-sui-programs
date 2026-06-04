@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:scripts": "bun build sui/scripts/live-transact.ts sui/scripts/regtest-flow.ts sui/scripts/relay-deposit.ts sui/scripts/deploy.ts sui/scripts/init.ts sui/scripts/register-vkey.ts --target=node --outdir=/tmp/utxopia-sui-programs-build"
+    "check:scripts": "bun build scripts/live-transact.ts scripts/regtest-flow.ts scripts/relay-deposit.ts scripts/deploy.ts scripts/init.ts scripts/register-vkey.ts --target=node --outdir=/tmp/utxopia-sui-programs-build"
   },
   "dependencies": {
     "@ika.xyz/sdk": "^0.4.1",

@@ -16,24 +16,50 @@ const gasBudget = process.env.UTXOPIA_SUI_GAS_BUDGET ?? "100000000";
 const state = readState();
 const packageId = requireState(state.packageId, "packageId");
 
-call("pool", "initialize", ["16", `0x${"00".repeat(32)}`]);
-call("btc_deposit", "initialize_registry", []);
-call("nullifier", "initialize_registry", []);
-call("redemption", "initialize_queue", []);
-call("verifier", "initialize_registry", []);
+// Pool (no initial_root — the commitment_tree is now the single source of truth).
+const poolCh = call("pool", "initialize", ["16"]);
+state.pool = sharedRefFromChange(findCreatedObject(poolCh, "::pool::Pool"));
+state.adminCap = objectRefFromChange(findCreatedObject(poolCh, "::pool::AdminCap"));
+
+// Real Poseidon commitment tree (replaces the old SHA256-chain merkle).
+const treeCh = call("commitment_tree", "initialize", []);
+state.commitmentTree = sharedRefFromChange(findCreatedObject(treeCh, "::commitment_tree::CommitmentTree"));
+
+// Deposit dedup registry + pool UTXO set (Table-backed).
+const regCh = call("btc_deposit", "initialize_registry", []);
+state.btcDepositRegistry = sharedRefFromChange(findCreatedObject(regCh, "::btc_deposit::BtcDepositRegistry"));
+const utxoCh = call("btc_deposit", "initialize_utxo_set", []);
+state.utxoSet = sharedRefFromChange(findCreatedObject(utxoCh, "::btc_deposit::UtxoSet"));
+
+const nullCh = call("nullifier", "initialize_registry", []);
+state.nullifierRegistry = sharedRefFromChange(findCreatedObject(nullCh, "::nullifier::NullifierRegistry"));
+
+const redCh = call("redemption", "initialize_queue", []);
+state.redemptionQueue = sharedRefFromChange(findCreatedObject(redCh, "::redemption::RedemptionQueue"));
+state.redemptionCap = objectRefFromChange(findCreatedObject(redCh, "::redemption::RedemptionCap"));
+
+const vkCh = call("verifier", "initialize_registry", []);
+state.verifyingKeyRegistry = sharedRefFromChange(findCreatedObject(vkCh, "::verifier::VerifyingKeyRegistry"));
+
+// NOTE: btc_light_client::initialize is a separate, network-specific bootstrap (it anchors
+// a trusted checkpoint header + chainwork) driven by the header relayer — analogous to the
+// standalone btc-light-client program on Solana. See scripts/e2e-localnet.ts for the full
+// flow including light-client init + a deposit.
 
 writeState(state);
 console.log(`Wrote ${stateFile()}`);
 console.log(JSON.stringify({
   pool: state.pool,
+  commitmentTree: state.commitmentTree,
   btcDepositRegistry: state.btcDepositRegistry,
+  utxoSet: state.utxoSet,
   nullifierRegistry: state.nullifierRegistry,
   redemptionQueue: state.redemptionQueue,
   redemptionCap: state.redemptionCap,
   verifyingKeyRegistry: state.verifyingKeyRegistry,
 }, null, 2));
 
-function call(module: string, fn: string, args: string[]) {
+function call(module: string, fn: string, args: string[]): any[] {
   const result = spawnSync("sui", [
     "client",
     "call",
@@ -59,19 +85,5 @@ function call(module: string, fn: string, args: string[]) {
   }
 
   const output = parseJsonFromStdout(result.stdout) as any;
-  const changes = output.objectChanges ?? [];
-
-  if (module === "pool") {
-    state.pool = sharedRefFromChange(findCreatedObject(changes, "::pool::Pool"));
-    state.adminCap = objectRefFromChange(findCreatedObject(changes, "::pool::AdminCap"));
-  } else if (module === "btc_deposit") {
-    state.btcDepositRegistry = sharedRefFromChange(findCreatedObject(changes, "::btc_deposit::BtcDepositRegistry"));
-  } else if (module === "nullifier") {
-    state.nullifierRegistry = sharedRefFromChange(findCreatedObject(changes, "::nullifier::NullifierRegistry"));
-  } else if (module === "redemption") {
-    state.redemptionQueue = sharedRefFromChange(findCreatedObject(changes, "::redemption::RedemptionQueue"));
-    state.redemptionCap = objectRefFromChange(findCreatedObject(changes, "::redemption::RedemptionCap"));
-  } else if (module === "verifier") {
-    state.verifyingKeyRegistry = sharedRefFromChange(findCreatedObject(changes, "::verifier::VerifyingKeyRegistry"));
-  }
+  return output.objectChanges ?? [];
 }

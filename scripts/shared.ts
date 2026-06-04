@@ -56,7 +56,11 @@ export interface SuiPocState {
   adminCap?: SuiObjectRef;
   upgradeCap?: SuiObjectRef;
   pool?: SuiSharedObjectRef;
+  commitmentTree?: SuiSharedObjectRef;
   btcDepositRegistry?: SuiSharedObjectRef;
+  utxoSet?: SuiSharedObjectRef;
+  lightClient?: SuiSharedObjectRef;
+  lightClientAdminCap?: SuiObjectRef;
   nullifierRegistry?: SuiSharedObjectRef;
   redemptionQueue?: SuiSharedObjectRef;
   redemptionCap?: SuiObjectRef;
@@ -86,8 +90,9 @@ export interface SuiPocState {
   }>;
 }
 
-export const ROOT = path.resolve(import.meta.dir, "../../..");
-export const DEFAULT_STATE_FILE = path.join(ROOT, "chains/sui/sui-poc-state.json");
+// Repo root (post-flatten: scripts/ sits directly under the repo root).
+export const ROOT = path.resolve(import.meta.dir, "..");
+export const DEFAULT_STATE_FILE = path.join(ROOT, "sui-poc-state.json");
 
 export function stateFile(): string {
   return process.env.UTXOPIA_SUI_STATE_FILE ?? DEFAULT_STATE_FILE;

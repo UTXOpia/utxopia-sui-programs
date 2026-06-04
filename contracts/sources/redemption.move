@@ -17,7 +17,9 @@ module utxopia::redemption {
 
     public struct RedemptionRequest has store, drop {
         id: u64,
-        btc_address_hash: vector<u8>,
+        /// Raw destination scriptPubKey (NOT a hash / bech32). Pins the destination so
+        /// completion can byte-compare it against the SPV-verified broadcast output.
+        btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
         completed: bool,
@@ -38,17 +40,18 @@ module utxopia::redemption {
         _: &RedemptionCap,
         pool: &mut Pool,
         queue: &mut RedemptionQueue,
-        btc_address_hash: vector<u8>,
+        btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
     ) {
         pool::assert_not_paused(pool);
         assert!(amount_sats > 0, errors::invalid_redemption());
+        assert!(vector::length(&btc_script) > 0, errors::invalid_redemption());
 
         let redemption_id = pool::allocate_redemption_id(pool);
         vector::push_back(&mut queue.requests, RedemptionRequest {
             id: redemption_id,
-            btc_address_hash,
+            btc_script,
             amount_sats,
             max_fee_sats,
             completed: false,
@@ -58,7 +61,7 @@ module utxopia::redemption {
         events::redemption_requested(
             pool::pool_id(pool),
             redemption_id,
-            request.btc_address_hash,
+            request.btc_script,
             amount_sats,
             max_fee_sats,
         );
@@ -80,6 +83,18 @@ module utxopia::redemption {
     public(package) fun is_pending(queue: &RedemptionQueue, redemption_id: u64): bool {
         let request = borrow_request(queue, redemption_id);
         !request.completed
+    }
+
+    public(package) fun request_amount(queue: &RedemptionQueue, redemption_id: u64): u64 {
+        borrow_request(queue, redemption_id).amount_sats
+    }
+
+    public(package) fun request_max_fee(queue: &RedemptionQueue, redemption_id: u64): u64 {
+        borrow_request(queue, redemption_id).max_fee_sats
+    }
+
+    public(package) fun request_btc_script(queue: &RedemptionQueue, redemption_id: u64): vector<u8> {
+        borrow_request(queue, redemption_id).btc_script
     }
 
     fun borrow_request(queue: &RedemptionQueue, redemption_id: u64): &RedemptionRequest {

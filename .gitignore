@@ -19,3 +19,7 @@ coverage/
 *.pem
 *.key
 
+
+# localnet ephemeral publication
+Pub.*.toml
+sui-poc-state.json

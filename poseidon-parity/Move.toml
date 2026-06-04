@@ -1,0 +1,7 @@
+[package]
+name = "poseidon_parity"
+version = "0.0.1"
+edition = "2024.beta"
+
+[addresses]
+poseidon_parity = "0x0"

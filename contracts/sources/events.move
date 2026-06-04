@@ -75,6 +75,14 @@ module utxopia::events {
         vk_hash: vector<u8>,
     }
 
+    public struct HeadersSubmitted has copy, drop {
+        light_client_id: address,
+        tip_hash: vector<u8>,
+        tip_height: u64,
+        total_chainwork: u256,
+        reorg: bool,
+    }
+
     public(package) fun pool_created(pool_id: address, tree_depth: u64, version: u64) {
         event::emit(PoolCreated { pool_id, tree_depth, version });
     }
@@ -168,6 +176,22 @@ module utxopia::events {
             n_inputs,
             n_outputs,
             vk_hash,
+        });
+    }
+
+    public(package) fun headers_submitted(
+        light_client_id: address,
+        tip_hash: vector<u8>,
+        tip_height: u64,
+        total_chainwork: u256,
+        reorg: bool,
+    ) {
+        event::emit(HeadersSubmitted {
+            light_client_id,
+            tip_hash,
+            tip_height,
+            total_chainwork,
+            reorg,
         });
     }
 }

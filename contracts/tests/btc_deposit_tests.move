@@ -1,103 +1,167 @@
 #[test_only]
 module utxopia::btc_deposit_tests {
     use sui::test_scenario;
-    use utxopia::btc_light_client;
-    use utxopia::btc_deposit::{Self, BtcDepositRegistry};
+    use sui::clock;
+    use utxopia::btc_light_client::{Self as lc, LightClient};
+    use utxopia::btc_deposit::{Self, BtcDepositRegistry, UtxoSet};
+    use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::pool::{Self, Pool};
 
     const SENDER: address = @0xA11CE;
+    const REGTEST: u8 = 2;
+    const REGTEST_BITS: u32 = 0x207fffff;
+
+    // Build a fresh, fully-initialized world; take shared objects in the next tx.
+    fun setup(scenario: &mut test_scenario::Scenario) {
+        let genesis = make_header(bytes(32, 0), bytes(32, 9), 1000, REGTEST_BITS, 0);
+        lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(scenario));
+        pool::initialize(16, test_scenario::ctx(scenario));
+        commitment_tree::initialize(test_scenario::ctx(scenario));
+        btc_deposit::initialize_registry(test_scenario::ctx(scenario));
+        btc_deposit::initialize_utxo_set(test_scenario::ctx(scenario));
+    }
 
     #[test]
-    fun completes_verified_deposit_once() {
+    fun completes_deposit_once() {
         let mut scenario = test_scenario::begin(SENDER);
-
-        pool::initialize(16, bytes32(0), test_scenario::ctx(&mut scenario));
-        btc_deposit::initialize_registry(test_scenario::ctx(&mut scenario));
+        setup(&mut scenario);
         test_scenario::next_tx(&mut scenario, SENDER);
 
         let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
         let mut registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
 
-        let verified_deposit = btc_light_client::new_verified_deposit(
-            bytes32(1),
-            0,
-            25_000,
-            bytes64(3),
-            bytes32(4),
-            bytes32(5),
-            test_scenario::ctx(&mut scenario),
+        // deposit/sweep tx: credited P2TR (vout 0, 50_000) + deposit OP_RETURN (vout 1)
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_txid = lc::test_double_sha256(sweep_tx);
+
+        // single-tx block whose merkle root IS the sweep txid
+        let g = lc::tip_hash(&light);
+        let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
+        lc::submit_headers(&mut light, block, &clk);
+        let block_hash = lc::test_double_sha256(block);
+
+        let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        btc_deposit::complete_deposit(
+            &mut pool, &mut registry, &mut utxo_set, &mut tree,
+            inclusion, sweep_tx, vector[], true, vector[],
         );
 
-        btc_deposit::complete_verified_deposit(
-            &mut pool,
-            &mut registry,
-            verified_deposit,
-        );
+        assert!(commitment_tree::next_index(&tree) == 1, 0);
+        assert!(commitment_tree::current_root(&tree) != commitment_tree::empty_root(), 1);
+        assert!(btc_deposit::claimed_count(&registry) == 1, 2);
+        assert!(btc_deposit::is_claimed(&registry, sweep_txid, 0), 3);
+        assert!(btc_deposit::contains_utxo(&utxo_set, sweep_txid, 0), 4);
+        assert!(pool::deposit_count(&pool) == 1, 5);
+        assert!(pool::total_shielded(&pool) == 50_000, 6); // fee bps/service default 0
 
-        assert!(btc_deposit::claimed_count(&registry) == 1, 0);
-        assert!(pool::latest_root(&pool) == bytes32(5), 1);
-        assert!(pool::latest_root_index(&pool) == 1, 2);
-
+        clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
         test_scenario::return_shared(registry);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(light);
         test_scenario::end(scenario);
     }
 
     #[test, expected_failure(abort_code = 15)]
-    fun rejects_duplicate_deposit_outpoint() {
+    fun rejects_duplicate_deposit() {
         let mut scenario = test_scenario::begin(SENDER);
-
-        pool::initialize(16, bytes32(0), test_scenario::ctx(&mut scenario));
-        btc_deposit::initialize_registry(test_scenario::ctx(&mut scenario));
+        setup(&mut scenario);
         test_scenario::next_tx(&mut scenario, SENDER);
 
         let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
         let mut registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
 
-        let verified_deposit = btc_light_client::new_verified_deposit(
-            bytes32(1),
-            0,
-            25_000,
-            bytes64(3),
-            bytes32(4),
-            bytes32(5),
-            test_scenario::ctx(&mut scenario),
-        );
-        btc_deposit::complete_verified_deposit(&mut pool, &mut registry, verified_deposit);
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_txid = lc::test_double_sha256(sweep_tx);
+        let g = lc::tip_hash(&light);
+        let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
+        lc::submit_headers(&mut light, block, &clk);
+        let block_hash = lc::test_double_sha256(block);
 
-        let duplicate_verified_deposit = btc_light_client::new_verified_deposit(
-            bytes32(1),
-            0,
-            25_000,
-            bytes64(3),
-            bytes32(8),
-            bytes32(7),
-            test_scenario::ctx(&mut scenario),
-        );
-        btc_deposit::complete_verified_deposit(&mut pool, &mut registry, duplicate_verified_deposit);
+        let inc1 = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc1, sweep_tx, vector[], true, vector[]);
 
+        // same outpoint again -> E_BTC_DEPOSIT_ALREADY_CLAIMED (15)
+        let inc2 = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc2, sweep_tx, vector[], true, vector[]);
+
+        clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
         test_scenario::return_shared(registry);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(light);
         test_scenario::end(scenario);
     }
 
-    fun bytes32(byte: u8): vector<u8> {
+    // ===================== helpers =====================
+
+    fun make_header(prev: vector<u8>, merkle: vector<u8>, ts: u32, bits: u32, nonce: u32): vector<u8> {
+        let mut h = le32(1);
+        vector::append(&mut h, prev);
+        vector::append(&mut h, merkle);
+        vector::append(&mut h, le32(ts));
+        vector::append(&mut h, le32(bits));
+        vector::append(&mut h, le32(nonce));
+        h
+    }
+
+    /// One-input, two-output legacy tx. Input spends (bytes32(0x11), vout 7).
+    fun build_deposit_tx(v0: u64, s0: vector<u8>, s1: vector<u8>): vector<u8> {
+        let mut tx = le32(1);
+        vector::append(&mut tx, vector[0x01u8]);   // 1 input
+        vector::append(&mut tx, bytes(32, 0x11));  // prev_txid
+        vector::append(&mut tx, le32(7));           // prev_vout
+        vector::append(&mut tx, vector[0x00u8]);    // empty scriptSig
+        vector::append(&mut tx, le32(0xffffffff));  // sequence
+        vector::append(&mut tx, vector[0x02u8]);    // 2 outputs
+        vector::append(&mut tx, le64(v0));
+        vector::append(&mut tx, vector[(vector::length(&s0) as u8)]);
+        vector::append(&mut tx, s0);
+        vector::append(&mut tx, le64(0));           // OP_RETURN output value 0
+        vector::append(&mut tx, vector[(vector::length(&s1) as u8)]);
+        vector::append(&mut tx, s1);
+        vector::append(&mut tx, le32(0));           // locktime
+        tx
+    }
+
+    fun le32(v: u32): vector<u8> {
+        vector[((v & 0xff) as u8), (((v >> 8) & 0xff) as u8), (((v >> 16) & 0xff) as u8), (((v >> 24) & 0xff) as u8)]
+    }
+
+    fun le64(v: u64): vector<u8> {
         let mut out = vector[];
         let mut i = 0u64;
-        while (i < 32) {
-            vector::push_back(&mut out, byte);
-            i = i + 1;
-        };
+        while (i < 8) { vector::push_back(&mut out, (((v >> ((8 * i) as u8)) & 0xff) as u8)); i = i + 1; };
         out
     }
 
-    fun bytes64(byte: u8): vector<u8> {
+    fun bytes(n: u64, b: u8): vector<u8> {
         let mut out = vector[];
         let mut i = 0u64;
-        while (i < 64) {
-            vector::push_back(&mut out, byte);
-            i = i + 1;
-        };
+        while (i < n) { vector::push_back(&mut out, b); i = i + 1; };
         out
+    }
+
+    fun p2tr(fill: u8): vector<u8> {
+        let mut s = vector[0x51u8, 0x20u8];
+        vector::append(&mut s, bytes(32, fill));
+        s
+    }
+
+    fun op_return(eph_fill: u8, npk_fill: u8): vector<u8> {
+        let mut s = vector[0x6au8, 0x40u8];
+        vector::append(&mut s, bytes(32, eph_fill));
+        vector::append(&mut s, bytes(32, npk_fill));
+        s
     }
 }

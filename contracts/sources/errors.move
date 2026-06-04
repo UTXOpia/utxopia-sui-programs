@@ -37,6 +37,8 @@ module utxopia::errors {
     const E_DEPOSIT_LINKAGE_FAILED: u64 = 36;
     const E_APPROVAL_USED: u64 = 37;
     const E_APPROVAL_EXPIRED: u64 = 38;
+    const E_WRONG_CAP: u64 = 39;
+    const E_WRONG_OBJECT: u64 = 40;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -76,4 +78,6 @@ module utxopia::errors {
     public fun deposit_linkage_failed(): u64 { E_DEPOSIT_LINKAGE_FAILED }
     public fun approval_used(): u64 { E_APPROVAL_USED }
     public fun approval_expired(): u64 { E_APPROVAL_EXPIRED }
+    public fun wrong_cap(): u64 { E_WRONG_CAP }
+    public fun wrong_object(): u64 { E_WRONG_OBJECT }
 }

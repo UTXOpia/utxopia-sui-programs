@@ -1,4 +1,5 @@
 module utxopia::transact {
+    use sui::object;
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
     use utxopia::events;
@@ -20,6 +21,11 @@ module utxopia::transact {
         commitments_out: vector<vector<u8>>,
     ) {
         pool::assert_not_paused(pool);
+        // Pin canonical companions: a substituted (empty) NullifierRegistry would otherwise
+        // let the same note be spent repeatedly; a substituted tree forks the root history.
+        pool::assert_commitment_tree(pool, object::id(tree));
+        pool::assert_nullifier_registry(pool, object::id(nullifiers));
+        pool::assert_vk_registry(pool, object::id(vk_registry));
         assert!(nullifiers_in.length() == (n_inputs as u64), errors::invalid_join_split());
         assert!(commitments_out.length() == (n_outputs as u64), errors::invalid_join_split());
         // Validates total length (and thus that index 0/1 are present) before slicing.

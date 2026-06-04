@@ -1,13 +1,15 @@
 module utxopia::redemption {
-    use sui::object::{Self, UID};
+    use sui::object::{Self, ID, UID};
     use sui::transfer;
     use sui::tx_context::TxContext;
     use utxopia::errors;
     use utxopia::events;
     use utxopia::pool::{Self, Pool};
 
+    /// Authority over exactly one RedemptionQueue (bound by `queue_id`).
     public struct RedemptionCap has key {
         id: UID,
+        queue_id: ID,
     }
 
     public struct RedemptionQueue has key {
@@ -30,20 +32,30 @@ module utxopia::redemption {
             id: object::new(ctx),
             requests: vector[],
         };
-        let cap = RedemptionCap { id: object::new(ctx) };
+        let cap = RedemptionCap { id: object::new(ctx), queue_id: object::id(&queue) };
 
         transfer::share_object(queue);
         transfer::transfer(cap, sui::tx_context::sender(ctx));
     }
 
+    fun assert_cap(cap: &RedemptionCap, queue: &RedemptionQueue) {
+        assert!(cap.queue_id == object::id(queue), errors::wrong_cap());
+    }
+
+    /// Lets sibling modules (ika_policy) verify a cap authorizes this queue.
+    public(package) fun assert_cap_for_queue(cap: &RedemptionCap, queue: &RedemptionQueue) {
+        assert_cap(cap, queue);
+    }
+
     public fun request_redemption(
-        _: &RedemptionCap,
+        cap: &RedemptionCap,
         pool: &mut Pool,
         queue: &mut RedemptionQueue,
         btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
     ) {
+        assert_cap(cap, queue);
         pool::assert_not_paused(pool);
         assert!(amount_sats > 0, errors::invalid_redemption());
         assert!(vector::length(&btc_script) > 0, errors::invalid_redemption());
@@ -68,12 +80,13 @@ module utxopia::redemption {
     }
 
     public fun complete_redemption(
-        _: &RedemptionCap,
+        cap: &RedemptionCap,
         pool: &Pool,
         queue: &mut RedemptionQueue,
         redemption_id: u64,
         btc_txid: vector<u8>,
     ) {
+        assert_cap(cap, queue);
         let request = borrow_request_mut(queue, redemption_id);
         assert!(!request.completed, errors::redemption_completed());
         request.completed = true;

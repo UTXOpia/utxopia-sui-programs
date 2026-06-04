@@ -12,7 +12,7 @@
 /// `verify_tx_inclusion` and DELETES the shim, closing the forgeable-deposit hole.
 module utxopia::btc_light_client {
     use std::hash;
-    use sui::object::{Self, UID};
+    use sui::object::{Self, ID, UID};
     use sui::tx_context::{Self, TxContext};
     use sui::dynamic_field as df;
     use sui::clock::{Self, Clock};
@@ -42,7 +42,7 @@ module utxopia::btc_light_client {
     // Light client
     // =====================================================================
 
-    public struct LightClientAdminCap has key { id: UID }
+    public struct LightClientAdminCap has key { id: UID, light_client_id: ID }
 
     /// Shared singleton. One per deployment.
     public struct LightClient has key {
@@ -145,11 +145,13 @@ module utxopia::btc_light_client {
         store_header(&mut lc, record);
         set_canonical_height(&mut lc, genesis_height, block_hash);
 
-        transfer::transfer(LightClientAdminCap { id: object::new(ctx) }, tx_context::sender(ctx));
+        let cap = LightClientAdminCap { id: object::new(ctx), light_client_id: object::id(&lc) };
+        transfer::transfer(cap, tx_context::sender(ctx));
         transfer::share_object(lc);
     }
 
-    public fun set_paused(_: &LightClientAdminCap, lc: &mut LightClient, paused: bool) {
+    public fun set_paused(cap: &LightClientAdminCap, lc: &mut LightClient, paused: bool) {
+        assert!(cap.light_client_id == object::id(lc), errors::wrong_cap());
         lc.paused = paused;
     }
 
@@ -303,6 +305,9 @@ module utxopia::btc_light_client {
         merkle_siblings: vector<vector<u8>>,
         path_bits: u64,
     ): VerifiedInclusion {
+        // Reject malformed proofs up front: Bitcoin hashes are fixed 32-byte values.
+        assert!(vector::length(&block_hash) == 32, errors::bad_merkle_proof());
+        assert!(vector::length(&txid) == 32, errors::bad_merkle_proof());
         assert!(has_header(lc, &block_hash), errors::unknown_block());
         let rec = *get_header(lc, &block_hash);
 
@@ -322,6 +327,7 @@ module utxopia::btc_light_client {
             let mut i = 0;
             while (i < n_sib) {
                 let sib = *vector::borrow(&merkle_siblings, i);
+                assert!(vector::length(&sib) == 32, errors::bad_merkle_proof());
                 let is_left = ((path_bits >> (i as u8)) & 1) == 1;
                 current = if (is_left) {
                     double_sha256_pair(&sib, &current)

@@ -71,6 +71,11 @@ module utxopia::btc_deposit {
         pool_script: vector<u8>,
     ) {
         pool::assert_not_paused(pool);
+        // Pin canonical companions so a caller can't pass a fresh registry/tree to bypass
+        // outpoint dedup or insert into a non-canonical tree under this pool's events.
+        pool::assert_commitment_tree(pool, object::id(tree));
+        pool::assert_btc_deposit_registry(pool, object::id(registry));
+        pool::assert_utxo_set(pool, object::id(utxo_set));
 
         // Module 01 already enforced canonical chain + >= required confirmations.
         let (sweep_txid, _block_hash, _height, _merkle_root, _tx_index) =
@@ -117,11 +122,12 @@ module utxopia::btc_deposit {
         assert!(amount_sats >= pool::min_deposit_sats(pool), errors::amount_too_small());
         assert!(amount_sats <= pool::max_deposit_sats(pool), errors::amount_too_large());
 
-        // Fees (widen to u128 for the bps multiply, then narrow).
-        let protocol_fee = (((amount_sats as u128) * (pool::deposit_fee_bps(pool) as u128)) / 10_000) as u64;
-        let total_fee = protocol_fee + pool::service_fee_sats(pool);
-        assert!(amount_sats > total_fee, errors::fee_exceeds_amount());
-        let shielded_amount = amount_sats - total_fee;
+        // Fees computed entirely in u128 so an admin-configured service fee near u64::MAX
+        // yields a clean fee_exceeds_amount rejection rather than an arithmetic-overflow abort.
+        let protocol_fee = ((amount_sats as u128) * (pool::deposit_fee_bps(pool) as u128)) / 10_000;
+        let total_fee = protocol_fee + (pool::service_fee_sats(pool) as u128);
+        assert!((amount_sats as u128) > total_fee, errors::fee_exceeds_amount());
+        let shielded_amount = amount_sats - (total_fee as u64);
 
         // Double-claim guard on the immutable deposit outpoint (NOT the malleable sweep txid).
         let claim_key = outpoint_key(&deposit_txid, deposit_vout);

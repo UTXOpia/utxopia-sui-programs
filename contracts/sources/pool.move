@@ -1,7 +1,8 @@
 module utxopia::pool {
-    use sui::object::{Self, UID};
+    use sui::object::{Self, ID, UID};
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
+    use std::option::{Self, Option};
     use utxopia::errors;
     use utxopia::events;
 
@@ -10,12 +11,16 @@ module utxopia::pool {
     const DEFAULT_MAX_DEPOSIT_SATS: u64 = 2_100_000_000_000_000; // 21M BTC
     const MAX_BPS: u16 = 10_000;
 
+    /// Authority over exactly one Pool (bound by `pool_id`). Minting a cap via `initialize`
+    /// only grants authority over the pool it created — never another pool.
     public struct AdminCap has key {
         id: UID,
+        pool_id: ID,
     }
 
-    /// Pool state. The Merkle root and leaf count live in `commitment_tree`
-    /// (the single source of truth); `Pool` holds policy/admin/accounting state.
+    /// Pool state. The Merkle root and leaf count live in `commitment_tree`; `Pool` holds
+    /// policy/admin/accounting state and pins the canonical companion object ids so callers
+    /// of `transact`/`complete_deposit` cannot substitute a fresh tree/registry.
     public struct Pool has key {
         id: UID,
         tree_depth: u64,
@@ -24,13 +29,19 @@ module utxopia::pool {
         // deposit policy
         min_deposit_sats: u64,
         max_deposit_sats: u64,
-        deposit_fee_bps: u16,    // protocol fee, <= 10_000
-        service_fee_sats: u64,   // flat per-deposit service fee
-        btc_token_id: u256,      // = ZKBTC_TOKEN_ID
+        deposit_fee_bps: u16,
+        service_fee_sats: u64,
+        btc_token_id: u256,
         // accounting
         deposit_count: u64,
         total_shielded: u128,
         total_utxo_sats: u128,
+        // canonical companion object ids (set once via AdminCap)
+        commitment_tree_id: Option<ID>,
+        nullifier_registry_id: Option<ID>,
+        btc_deposit_registry_id: Option<ID>,
+        utxo_set_id: Option<ID>,
+        vk_registry_id: Option<ID>,
     }
 
     public fun initialize(tree_depth: u64, ctx: &mut TxContext) {
@@ -49,36 +60,85 @@ module utxopia::pool {
             deposit_count: 0,
             total_shielded: 0,
             total_utxo_sats: 0,
+            commitment_tree_id: option::none(),
+            nullifier_registry_id: option::none(),
+            btc_deposit_registry_id: option::none(),
+            utxo_set_id: option::none(),
+            vk_registry_id: option::none(),
         };
-        let pool_id = object::uid_to_address(&pool.id);
-
-        let admin_cap = AdminCap { id: object::new(ctx) };
-        events::pool_created(pool_id, tree_depth, PROTOCOL_VERSION);
+        let pool_id = object::id(&pool);
+        events::pool_created(object::id_to_address(&pool_id), tree_depth, PROTOCOL_VERSION);
 
         transfer::share_object(pool);
-        transfer::transfer(admin_cap, tx_context::sender(ctx));
+        transfer::transfer(AdminCap { id: object::new(ctx), pool_id }, tx_context::sender(ctx));
     }
 
-    public fun set_paused(_: &AdminCap, pool: &mut Pool, paused: bool) {
+    fun assert_admin(cap: &AdminCap, pool: &Pool) {
+        assert!(cap.pool_id == object::id(pool), errors::wrong_cap());
+    }
+
+    public fun set_paused(cap: &AdminCap, pool: &mut Pool, paused: bool) {
+        assert_admin(cap, pool);
         pool.paused = paused;
         events::pool_paused(object::uid_to_address(&pool.id), paused);
     }
 
-    /// Configure deposit policy (AdminCap-gated). Fees are bounded; min <= max enforced.
     public fun set_deposit_config(
-        _: &AdminCap,
+        cap: &AdminCap,
         pool: &mut Pool,
         min_deposit_sats: u64,
         max_deposit_sats: u64,
         deposit_fee_bps: u16,
         service_fee_sats: u64,
     ) {
+        assert_admin(cap, pool);
         assert!(deposit_fee_bps <= MAX_BPS, errors::invalid_btc_deposit());
         assert!(min_deposit_sats <= max_deposit_sats, errors::invalid_btc_deposit());
         pool.min_deposit_sats = min_deposit_sats;
         pool.max_deposit_sats = max_deposit_sats;
         pool.deposit_fee_bps = deposit_fee_bps;
         pool.service_fee_sats = service_fee_sats;
+    }
+
+    // --- canonical companion binding (AdminCap-gated, set once each) ---
+
+    public fun set_commitment_tree_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        pool.commitment_tree_id = option::some(id);
+    }
+    public fun set_nullifier_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        pool.nullifier_registry_id = option::some(id);
+    }
+    public fun set_btc_deposit_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        pool.btc_deposit_registry_id = option::some(id);
+    }
+    public fun set_utxo_set_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        pool.utxo_set_id = option::some(id);
+    }
+    public fun set_vk_registry_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        pool.vk_registry_id = option::some(id);
+    }
+
+    // --- canonical-object assertions (fail closed: unbound OR mismatch both abort) ---
+
+    public(package) fun assert_commitment_tree(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.commitment_tree_id, &id), errors::wrong_object());
+    }
+    public(package) fun assert_nullifier_registry(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.nullifier_registry_id, &id), errors::wrong_object());
+    }
+    public(package) fun assert_btc_deposit_registry(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.btc_deposit_registry_id, &id), errors::wrong_object());
+    }
+    public(package) fun assert_utxo_set(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.utxo_set_id, &id), errors::wrong_object());
+    }
+    public(package) fun assert_vk_registry(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.vk_registry_id, &id), errors::wrong_object());
     }
 
     public fun assert_not_paused(pool: &Pool) {
@@ -95,7 +155,6 @@ module utxopia::pool {
         redemption_id
     }
 
-    /// Record a completed deposit's accounting (package-only; called by btc_deposit).
     public(package) fun record_deposit(pool: &mut Pool, shielded_sats: u64, gross_sats: u64) {
         pool.deposit_count = pool.deposit_count + 1;
         pool.total_shielded = pool.total_shielded + (shielded_sats as u128);

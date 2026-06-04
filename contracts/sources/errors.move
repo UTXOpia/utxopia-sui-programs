@@ -35,6 +35,8 @@ module utxopia::errors {
     const E_INVALID_STEALTH_OP_RETURN: u64 = 34;
     const E_UTXO_EXISTS: u64 = 35;
     const E_DEPOSIT_LINKAGE_FAILED: u64 = 36;
+    const E_APPROVAL_USED: u64 = 37;
+    const E_APPROVAL_EXPIRED: u64 = 38;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -72,4 +74,6 @@ module utxopia::errors {
     public fun invalid_stealth_op_return(): u64 { E_INVALID_STEALTH_OP_RETURN }
     public fun utxo_exists(): u64 { E_UTXO_EXISTS }
     public fun deposit_linkage_failed(): u64 { E_DEPOSIT_LINKAGE_FAILED }
+    public fun approval_used(): u64 { E_APPROVAL_USED }
+    public fun approval_expired(): u64 { E_APPROVAL_EXPIRED }
 }

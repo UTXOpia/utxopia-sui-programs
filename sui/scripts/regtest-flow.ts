@@ -6,12 +6,16 @@ import path from "node:path";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Curve, SignatureAlgorithm } from "@ika.xyz/sdk";
-import { computeBoundParamsHash } from "../../../sdk/src/bound-params";
-import { BN254_FIELD_PRIME, bytesToBigint } from "../../../sdk/src/crypto";
-import { eddsaGetPubKey, eddsaPoseidonSign } from "../../../sdk/src/keys";
-import { poseidonHashSync } from "../../../sdk/src/poseidon";
-import { UTXOpiaSuiAdapter } from "../../../packages/sdk-sui/src/sui-adapter";
-import { UTXOpiaSuiIkaAdapter } from "../../../packages/sdk-sui/src/ika";
+import {
+  BN254_FIELD_PRIME,
+  bytesToBigint,
+  computeBoundParamsHash,
+  eddsaGetPubKey,
+  eddsaPoseidonSign,
+  poseidonHashSync,
+} from "@utxopia/sdk";
+import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
+import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 import {
   createOpReturnTx,
   getNewAddress,
@@ -19,11 +23,14 @@ import {
   waitForEsplora,
   waitForTxIndexed,
   bitcoinCli,
-} from "../../../contracts/scripts/regtest-helpers";
+} from "./lib/regtest-helpers";
 import { ROOT, readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 import { loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
 
+const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
+  ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
+  : path.resolve(ROOT, "../utxopia-circuits/circuits");
 const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
 const TREE_DEPTH = 16;
 const ZKBTC_TOKEN_ID = 0x7a627463n;
@@ -367,7 +374,7 @@ function randomFieldElement(): bigint {
 }
 
 function generateProof(circuit: string, inputs: Record<string, unknown>) {
-  const circuitDir = path.join(ROOT, "circuits/build", circuit);
+  const circuitDir = path.join(CIRCUITS_DIR, "build", circuit);
   const wasmPath = path.join(circuitDir, `${circuit}_js`, `${circuit}.wasm`);
   const zkeyPath = path.join(circuitDir, `${circuit}.zkey`);
   if (!existsSync(wasmPath)) {
@@ -412,7 +419,7 @@ const snarkjs = require("snarkjs");
 }
 
 function verifyProof(circuit: string, proofPath: string, publicPath: string) {
-  const vkeyPath = path.join(ROOT, "circuits/build", circuit, `${circuit}.vkey.json`);
+  const vkeyPath = path.join(CIRCUITS_DIR, "build", circuit, `${circuit}.vkey.json`);
   const runnerPath = path.join(path.dirname(proofPath), "verify.cjs");
   writeFileSync(runnerPath, `
 const fs = require("fs");

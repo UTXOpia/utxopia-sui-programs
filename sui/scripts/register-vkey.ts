@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { UTXOpiaSuiAdapter } from "../../../packages/sdk-sui/src/sui-adapter";
+import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
 import { ROOT, parseJsonFromStdout, readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 
@@ -13,7 +13,10 @@ if (!match) {
 
 const nInputs = Number(match[1]);
 const nOutputs = Number(match[2]);
-const vkeyPath = path.join(ROOT, "circuits/build", circuit, `${circuit}.vkey.json`);
+const circuitsDir = process.env.UTXOPIA_CIRCUITS_DIR
+  ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
+  : path.resolve(ROOT, "../utxopia-circuits/circuits");
+const vkeyPath = path.join(circuitsDir, "build", circuit, `${circuit}.vkey.json`);
 const exportResult = spawnSync("cargo", [
   "run",
   "--quiet",

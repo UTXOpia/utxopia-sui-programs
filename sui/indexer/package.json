@@ -10,7 +10,7 @@
     "test": "bun test test"
   },
   "dependencies": {
-    "@mysten/sui": "^1.0.0",
-    "@utxopia/btc-client": "workspace:*"
+    "@mysten/sui": "^2.17.0",
+    "@utxopia/sdk": "github:UTXOpia/utxopia-sdk#main"
   }
 }

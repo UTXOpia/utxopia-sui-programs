@@ -1,5 +1,5 @@
-import { EsploraBitcoinClient } from "@utxopia/btc-client";
-import type { BitcoinDepositCandidate, BitcoinNetwork } from "@utxopia/btc-client";
+import { EsploraBitcoinClient } from "@utxopia/sdk/btc-client";
+import type { BitcoinDepositCandidate, BitcoinNetwork } from "@utxopia/sdk/btc-client";
 
 export interface SuiBitcoinNodeConfig {
   network: BitcoinNetwork;
@@ -29,4 +29,3 @@ export class SuiBitcoinNode {
     return this.bitcoin.broadcastTx(txHex);
   }
 }
-

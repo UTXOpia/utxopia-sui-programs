@@ -1,5 +1,5 @@
-import { SuiClient } from "@mysten/sui/client";
-import type { SuiEvent } from "@mysten/sui/client";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import type { SuiEvent } from "@mysten/sui/jsonRpc";
 import type {
   NormalizedSuiUtxopiaEvent,
   SuiEventCursor,
@@ -22,10 +22,10 @@ const KNOWN_EVENT_TYPES = new Set<SuiUtxopiaEventType>([
 ]);
 
 export class SuiUtxopiaEventSource {
-  private readonly client: SuiClient;
+  private readonly client: SuiJsonRpcClient;
 
   constructor(private readonly config: SuiIndexerConfig) {
-    this.client = new SuiClient({ url: config.rpcUrl });
+    this.client = new SuiJsonRpcClient({ url: config.rpcUrl });
   }
 
   async poll(cursor?: SuiEventCursor): Promise<{

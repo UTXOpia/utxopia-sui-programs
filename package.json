@@ -1,0 +1,14 @@
+{
+  "name": "@utxopia/sui-programs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:scripts": "bun build sui/scripts/live-transact.ts sui/scripts/regtest-flow.ts sui/scripts/relay-deposit.ts sui/scripts/deploy.ts sui/scripts/init.ts sui/scripts/register-vkey.ts --target=node --outdir=/tmp/utxopia-sui-programs-build"
+  },
+  "dependencies": {
+    "@ika.xyz/sdk": "^0.4.1",
+    "@mysten/sui": "^2.17.0",
+    "@noble/hashes": "^1.8.0",
+    "@utxopia/sdk": "github:UTXOpia/utxopia-sdk#main"
+  }
+}

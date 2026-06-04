@@ -4,7 +4,7 @@ import { Transaction } from "@mysten/sui/transactions";
 import { readState, writeState } from "./shared";
 import { hexToBytes, loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
 import { executeBuiltTransaction } from "./signing";
-import { UTXOpiaSuiIkaAdapter } from "../../../packages/sdk-sui/src/ika";
+import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 
 const state = readState();
 const ikaState = state.ikaSui ?? {};

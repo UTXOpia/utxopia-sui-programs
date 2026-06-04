@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
-import { UTXOpiaSuiAdapter } from "../../../packages/sdk-sui/src/sui-adapter";
+import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import {
   CommitmentTreeIndex,
   computeJoinSplitCommitmentSync,
   initPoseidon,
-} from "../../../sdk/src";
-import { bitcoinCli, waitForEsplora, waitForTxIndexed } from "../../../contracts/scripts/regtest-helpers";
+} from "@utxopia/sdk";
+import { bitcoinCli, waitForEsplora, waitForTxIndexed } from "./lib/regtest-helpers";
 import { readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 

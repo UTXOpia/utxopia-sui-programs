@@ -10,7 +10,7 @@ import { Transaction } from "@mysten/sui/transactions";
 import { readState, writeState } from "./shared";
 import { bytesToHex, loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
 import { activeSuiAddress, executeBuiltTransaction, loadActiveEd25519Keypair } from "./signing";
-import { UTXOpiaSuiIkaAdapter } from "../../../packages/sdk-sui/src/ika";
+import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 
 const state = readState();
 const ikaState = state.ikaSui ?? {};

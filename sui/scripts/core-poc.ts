@@ -2,11 +2,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { extractUtxopiaDepositOpReturn } from "../../../packages/btc-client/src/op-return";
-import { UTXOpiaSuiAdapter } from "../../../packages/sdk-sui/src/sui-adapter";
-import type { BitcoinTransaction } from "../../../packages/btc-client/src/types";
+import { extractUtxopiaDepositOpReturn, type BitcoinTransaction } from "@utxopia/sdk/btc-client";
+import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
+const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
+  ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
+  : path.resolve(ROOT, "../utxopia-circuits/circuits");
 const objectId = `0x${"1".padStart(64, "0")}`;
 
 async function main() {
@@ -72,7 +74,7 @@ async function verifyBitcoinDepositEvidence(): Promise<string> {
 }
 
 async function verifySuiVkeyExport(): Promise<string> {
-  const vkeyPath = path.join(ROOT, "circuits/build/joinsplit_1x1/joinsplit_1x1.vkey.json");
+  const vkeyPath = path.join(CIRCUITS_DIR, "build/joinsplit_1x1/joinsplit_1x1.vkey.json");
   if (!existsSync(vkeyPath)) {
     throw new Error(`missing ${vkeyPath}`);
   }

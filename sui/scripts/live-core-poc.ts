@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { UTXOpiaSuiAdapter } from "../../../packages/sdk-sui/src/sui-adapter";
+import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
 import { readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { readState, writeState } from "./shared";
-import { UTXOpiaSuiIkaAdapter } from "../../../packages/sdk-sui/src/ika";
+import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 import { activeSuiAddress } from "./signing";
 
 const state = readState();

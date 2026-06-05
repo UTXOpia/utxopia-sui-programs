@@ -7,9 +7,6 @@
 /// PTB. Native `u256` replaces Solana's 4×u64 limb math; `std::hash::sha2_256` is the
 /// double-SHA256 primitive.
 ///
-/// NOTE: the legacy `VerifiedBtcDeposit` shim (no verification) is retained TEMPORARILY so
-/// `btc_deposit` still compiles; module 04 (complete-deposit wiring) routes deposits through
-/// `verify_tx_inclusion` and DELETES the shim, closing the forgeable-deposit hole.
 module utxopia::btc_light_client {
     use std::hash;
     use sui::object::{Self, ID, UID};

@@ -5,7 +5,7 @@ module utxopia::btc_light_client_tests {
     use utxopia::btc_light_client::{Self as lc, LightClient, LightClientAdminCap};
 
     const SENDER: address = @0xA11CE;
-    const REGTEST: u8 = 2;
+    const REGTEST: u8 = 3;
     const REGTEST_BITS: u32 = 0x207fffff;
 
     // ===================== Unit: PoW / target / work / retarget =====================
@@ -65,6 +65,48 @@ module utxopia::btc_light_client_tests {
         assert!(lc::test_calculate_new_bits(0x1d00ffff, 1) == expected_low, 1);
         // huge timespan clamps to TS*4 => target*4 capped at MAX_TARGET => unchanged bits
         assert!(lc::test_calculate_new_bits(0x1d00ffff, 4294967295) == 0x1d00ffff, 2);
+    }
+
+    #[test]
+    fun u_required_bits_mainnet_retargets_at_boundary() {
+        let old_bits = 0x1b0404cb;
+        let expected_low = lc::test_calculate_new_bits(old_bits, 1209600 / 4);
+        assert!(
+            lc::test_required_bits_for_next_block(false, 2016, 2000, 1000 + 1209600 / 4, old_bits, 1000)
+                == expected_low,
+            0,
+        );
+        assert!(
+            lc::test_required_bits_for_next_block(false, 2017, 1000 + 1209600 / 4 + 600, 1000 + 1209600 / 4, expected_low, 1000 + 1209600 / 4)
+                == expected_low,
+            1,
+        );
+    }
+
+    #[test]
+    fun u_required_bits_testnet4_min_difficulty_exception() {
+        let epoch_bits = 0x1b0404cb;
+        assert!(
+            lc::test_required_bits_for_next_block(true, 2017, 2201, 1000, epoch_bits, 1000)
+                == 0x1d00ffff,
+            0,
+        );
+        assert!(
+            lc::test_required_bits_for_next_block(true, 2018, 2600, 2201, epoch_bits, 1000)
+                == epoch_bits,
+            1,
+        );
+    }
+
+    #[test]
+    fun u_required_bits_testnet4_bip94_boundary_ignores_min_diff_parent() {
+        let epoch_bits = 0x1b0404cb;
+        let expected = lc::test_calculate_new_bits(epoch_bits, 1209600);
+        assert!(
+            lc::test_required_bits_for_next_block(true, 4032, 3000, 1000 + 1209600, epoch_bits, 1000)
+                == expected,
+            0,
+        );
     }
 
     // ===================== Integration: submit / reorg / inclusion =====================

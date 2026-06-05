@@ -19,7 +19,10 @@ module utxopia::btc_light_client {
 
     // --- network ids ---
     const NETWORK_MAINNET: u8 = 0;
-    const NETWORK_REGTEST: u8 = 2;
+    #[allow(unused_const)]
+    const NETWORK_TESTNET3: u8 = 1;
+    const NETWORK_TESTNET4: u8 = 2;
+    const NETWORK_REGTEST: u8 = 3;
 
     // --- consensus constants ---
     const HEADER_LEN: u64 = 80;
@@ -107,7 +110,12 @@ module utxopia::btc_light_client {
         genesis_epoch_start_time: u32,
         ctx: &mut TxContext,
     ) {
-        assert!(network == NETWORK_MAINNET || network == NETWORK_REGTEST, errors::bad_bits());
+        // testnet3 is reserved/unsupported. testnet4 is supported with BIP94
+        // difficulty behavior below.
+        assert!(
+            network == NETWORK_MAINNET || network == NETWORK_TESTNET4 || network == NETWORK_REGTEST,
+            errors::bad_bits(),
+        );
         assert!(vector::length(&genesis_raw_header) == HEADER_LEN, errors::bad_header_len());
         let required_confirmations = if (network == NETWORK_MAINNET) { 6 } else { 1 };
         let block_hash = double_sha256(&genesis_raw_header);
@@ -177,10 +185,12 @@ module utxopia::btc_light_client {
         let mut running_height = parent.height;
         let mut running_expected_bits = parent.expected_bits;
         let mut running_epoch_start = parent.epoch_start_time;
+        let mut running_parent_timestamp = parent.timestamp;
 
         let mut newly_stored = 0u64;
         let mut hashes = vector[];
         let regtest = lc.network == NETWORK_REGTEST;
+        let testnet4 = lc.network == NETWORK_TESTNET4;
 
         let mut i = 0;
         while (i < n) {
@@ -196,22 +206,24 @@ module utxopia::btc_light_client {
             let block_height = running_height + 1;
 
             if (!regtest) {
+                let required_bits = required_bits_for_next_block(
+                    testnet4,
+                    block_height,
+                    timestamp,
+                    running_parent_timestamp,
+                    running_expected_bits,
+                    running_epoch_start,
+                );
                 let target = target_from_bits(bits);
                 assert!(hash_meets_target(&block_hash, target), errors::pow_not_met());
-                assert!(
-                    running_expected_bits == 0 || bits == running_expected_bits,
-                    errors::bad_bits(),
-                );
+                assert!(bits == required_bits, errors::bad_bits());
             };
 
             let new_chainwork = running_chainwork + work_from_bits(bits);
 
             // Difficulty retarget at the epoch boundary.
             if (!regtest && block_height % BLOCKS_PER_EPOCH == 0) {
-                if (running_epoch_start != 0 && running_expected_bits != 0) {
-                    let actual = wrapping_sub_u32(timestamp, running_epoch_start);
-                    running_expected_bits = calculate_new_bits(running_expected_bits, actual);
-                };
+                running_expected_bits = bits;
                 running_epoch_start = timestamp;
             };
 
@@ -238,6 +250,7 @@ module utxopia::btc_light_client {
             prev_hash = block_hash;
             running_chainwork = new_chainwork;
             running_height = block_height;
+            running_parent_timestamp = timestamp;
             i = i + 1;
         };
 
@@ -496,6 +509,33 @@ module utxopia::btc_light_client {
         bits_from_target(capped)
     }
 
+    fun required_bits_for_next_block(
+        testnet4: bool,
+        block_height: u64,
+        timestamp: u32,
+        parent_timestamp: u32,
+        epoch_bits: u32,
+        epoch_start_time: u32,
+    ): u32 {
+        if (epoch_bits == 0) {
+            return 0
+        };
+        if (block_height % BLOCKS_PER_EPOCH == 0) {
+            let actual = if (epoch_start_time == 0) {
+                TARGET_TIMESPAN as u32
+            } else {
+                wrapping_sub_u32(parent_timestamp, epoch_start_time)
+            };
+            // BIP94 testnet4 uses the first block's real epoch difficulty as
+            // the retarget base, not a later min-difficulty block.
+            return calculate_new_bits(epoch_bits, actual)
+        };
+        if (testnet4 && wrapping_sub_u32(timestamp, parent_timestamp) > 1200) {
+            return bits_from_target(MAX_TARGET)
+        };
+        epoch_bits
+    }
+
     // ---------------------------------------------------------------------
     // Byte / integer helpers
     // ---------------------------------------------------------------------
@@ -560,6 +600,24 @@ module utxopia::btc_light_client {
     #[test_only]
     public fun test_calculate_new_bits(old_bits: u32, actual: u32): u32 {
         calculate_new_bits(old_bits, actual)
+    }
+    #[test_only]
+    public fun test_required_bits_for_next_block(
+        testnet4: bool,
+        block_height: u64,
+        timestamp: u32,
+        parent_timestamp: u32,
+        epoch_bits: u32,
+        epoch_start_time: u32,
+    ): u32 {
+        required_bits_for_next_block(
+            testnet4,
+            block_height,
+            timestamp,
+            parent_timestamp,
+            epoch_bits,
+            epoch_start_time,
+        )
     }
     #[test_only]
     public fun test_wrapping_sub_u32(a: u32, b: u32): u32 { wrapping_sub_u32(a, b) }

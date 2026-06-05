@@ -20,7 +20,7 @@ import { executeBuiltTransaction } from "./signing";
 
 const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
 const ZKBTC_TOKEN_ID = 0x7a627463n;
-const REGTEST_NETWORK = 2;
+const REGTEST_NETWORK = 3;
 const MAX_HEADER_BATCH = 10;
 
 interface RelayArgs {

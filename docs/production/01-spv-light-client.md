@@ -85,7 +85,7 @@ module utxopia::btc_light_client {
     /// Shared singleton. One per deployment.
     public struct LightClient has key {
         id: UID,
-        network: u8,              // 0 = mainnet, 1 = testnet, 2 = regtest
+        network: u8,              // 0 = mainnet, 1 = testnet3 reserved, 2 = testnet4 reserved, 3 = regtest
         paused: bool,
         // canonical tip
         tip_hash: vector<u8>,     // 32 bytes, internal byte order (NOT reversed)

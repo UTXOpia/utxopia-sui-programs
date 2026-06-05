@@ -9,7 +9,7 @@ module utxopia::btc_deposit_tests {
     use utxopia::pool::{Self, Pool, AdminCap};
 
     const SENDER: address = @0xA11CE;
-    const REGTEST: u8 = 2;
+    const REGTEST: u8 = 3;
     const REGTEST_BITS: u32 = 0x207fffff;
 
     // Build a fresh, fully-initialized world; take shared objects in the next tx.

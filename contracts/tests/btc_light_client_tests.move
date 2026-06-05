@@ -158,7 +158,7 @@ module utxopia::btc_light_client_tests {
         lc::submit_headers(&mut light, blk, &clk);
 
         let v = lc::verify_tx_inclusion(&light, blkh, txid, 0, vector[], 0);
-        let (out_txid, out_block, out_height, out_root, out_index) = lc::consume_inclusion(v);
+        let (_lc_id, out_txid, out_block, out_height, out_root, out_index) = lc::consume_inclusion(v);
         assert!(out_txid == txid, 0);
         assert!(out_block == blkh, 1);
         assert!(out_height == 101, 2);

@@ -4,7 +4,6 @@ module utxopia::nullifier {
     use sui::tx_context::TxContext;
     use utxopia::errors;
     use utxopia::events;
-    use utxopia::pool::{Self, Pool};
 
     public struct NullifierRegistry has key {
         id: UID,
@@ -17,11 +16,6 @@ module utxopia::nullifier {
             spent: vector[],
         };
         transfer::share_object(registry);
-    }
-
-    public fun spend(pool: &Pool, registry: &mut NullifierRegistry, nullifier: vector<u8>) {
-        pool::assert_not_paused(pool);
-        record_spend(pool::pool_id(pool), registry, nullifier);
     }
 
     public(package) fun record_spend(pool_id: address, registry: &mut NullifierRegistry, nullifier: vector<u8>) {

@@ -5,7 +5,7 @@ module utxopia::verifier {
     use sui::tx_context::TxContext;
     use utxopia::errors;
     use utxopia::events;
-    use utxopia::pool::AdminCap;
+    use utxopia::pool::{Self, AdminCap, Pool};
 
     const MAX_SUI_PUBLIC_INPUTS: u8 = 8;
     const VK_HASH_LEN: u64 = 32;
@@ -31,7 +31,8 @@ module utxopia::verifier {
     }
 
     public fun register_prepared_key(
-        _: &AdminCap,
+        cap: &AdminCap,
+        pool: &Pool,
         registry: &mut VerifyingKeyRegistry,
         n_inputs: u8,
         n_outputs: u8,
@@ -42,8 +43,12 @@ module utxopia::verifier {
         gamma_g2_neg_pc_bytes: vector<u8>,
         delta_g2_neg_pc_bytes: vector<u8>,
     ) {
+        pool::assert_admin(cap, pool);
+        pool::assert_vk_registry(pool, object::id(registry));
         assert!(n_public <= MAX_SUI_PUBLIC_INPUTS, errors::too_many_public_inputs());
+        assert!(n_public == 2 + n_inputs + n_outputs, errors::invalid_verifying_key());
         assert!(vk_hash.length() == VK_HASH_LEN, errors::invalid_verifying_key());
+        assert!(!contains_key(registry, n_inputs, n_outputs, &vk_hash), errors::invalid_verifying_key());
 
         let entry = VerifyingKeyEntry {
             n_inputs,
@@ -70,7 +75,8 @@ module utxopia::verifier {
     }
 
     public fun register_raw_key(
-        _: &AdminCap,
+        cap: &AdminCap,
+        pool: &Pool,
         registry: &mut VerifyingKeyRegistry,
         n_inputs: u8,
         n_outputs: u8,
@@ -78,8 +84,12 @@ module utxopia::verifier {
         vk_hash: vector<u8>,
         raw_verifying_key: vector<u8>,
     ) {
+        pool::assert_admin(cap, pool);
+        pool::assert_vk_registry(pool, object::id(registry));
         assert!(n_public <= MAX_SUI_PUBLIC_INPUTS, errors::too_many_public_inputs());
+        assert!(n_public == 2 + n_inputs + n_outputs, errors::invalid_verifying_key());
         assert!(vk_hash.length() == VK_HASH_LEN, errors::invalid_verifying_key());
+        assert!(!contains_key(registry, n_inputs, n_outputs, &vk_hash), errors::invalid_verifying_key());
 
         let curve = groth16::bn254();
         let prepared_vk = groth16::prepare_verifying_key(&curve, &raw_verifying_key);

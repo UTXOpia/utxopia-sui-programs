@@ -42,6 +42,8 @@ module utxopia::pool {
         btc_deposit_registry_id: Option<ID>,
         utxo_set_id: Option<ID>,
         vk_registry_id: Option<ID>,
+        light_client_id: Option<ID>,
+        btc_pool_script: Option<vector<u8>>,
     }
 
     public fun initialize(tree_depth: u64, ctx: &mut TxContext) {
@@ -65,6 +67,8 @@ module utxopia::pool {
             btc_deposit_registry_id: option::none(),
             utxo_set_id: option::none(),
             vk_registry_id: option::none(),
+            light_client_id: option::none(),
+            btc_pool_script: option::none(),
         };
         let pool_id = object::id(&pool);
         events::pool_created(object::id_to_address(&pool_id), tree_depth, PROTOCOL_VERSION);
@@ -73,7 +77,7 @@ module utxopia::pool {
         transfer::transfer(AdminCap { id: object::new(ctx), pool_id }, tx_context::sender(ctx));
     }
 
-    fun assert_admin(cap: &AdminCap, pool: &Pool) {
+    public(package) fun assert_admin(cap: &AdminCap, pool: &Pool) {
         assert!(cap.pool_id == object::id(pool), errors::wrong_cap());
     }
 
@@ -130,6 +134,17 @@ module utxopia::pool {
         assert!(option::is_none(&pool.vk_registry_id), errors::already_bound());
         pool.vk_registry_id = option::some(id);
     }
+    public fun set_light_client_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        assert!(option::is_none(&pool.light_client_id), errors::already_bound());
+        pool.light_client_id = option::some(id);
+    }
+    public fun set_btc_pool_script(cap: &AdminCap, pool: &mut Pool, script: vector<u8>) {
+        assert_admin(cap, pool);
+        assert!(option::is_none(&pool.btc_pool_script), errors::already_bound());
+        assert!(vector::length(&script) > 0, errors::invalid_btc_deposit());
+        pool.btc_pool_script = option::some(script);
+    }
 
     // --- canonical-object assertions (fail closed: unbound OR mismatch both abort) ---
 
@@ -148,9 +163,17 @@ module utxopia::pool {
     public(package) fun assert_vk_registry(pool: &Pool, id: ID) {
         assert!(option::contains(&pool.vk_registry_id, &id), errors::wrong_object());
     }
+    public(package) fun assert_light_client(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.light_client_id, &id), errors::wrong_object());
+    }
 
     public fun assert_not_paused(pool: &Pool) {
         assert!(!pool.paused, errors::pool_paused());
+    }
+
+    public(package) fun btc_pool_script(pool: &Pool): vector<u8> {
+        assert!(option::is_some(&pool.btc_pool_script), errors::wrong_object());
+        *option::borrow(&pool.btc_pool_script)
     }
 
     public(package) fun pool_id(pool: &Pool): address {

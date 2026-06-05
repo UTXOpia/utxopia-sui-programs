@@ -87,6 +87,7 @@ module utxopia::btc_light_client {
     /// package-only `consume_inclusion`. Proves a txid is merkle-included in a canonical,
     /// sufficiently-confirmed block.
     public struct VerifiedInclusion {
+        light_client_id: ID,
         txid: vector<u8>,
         block_hash: vector<u8>,
         block_height: u64,
@@ -340,6 +341,7 @@ module utxopia::btc_light_client {
         };
 
         VerifiedInclusion {
+            light_client_id: object::id(lc),
             txid,
             block_hash,
             block_height: rec.height,
@@ -351,9 +353,9 @@ module utxopia::btc_light_client {
     /// Package-only unpack for the deposit module.
     public(package) fun consume_inclusion(
         v: VerifiedInclusion,
-    ): (vector<u8>, vector<u8>, u64, vector<u8>, u32) {
-        let VerifiedInclusion { txid, block_hash, block_height, merkle_root, tx_index } = v;
-        (txid, block_hash, block_height, merkle_root, tx_index)
+    ): (ID, vector<u8>, vector<u8>, u64, vector<u8>, u32) {
+        let VerifiedInclusion { light_client_id, txid, block_hash, block_height, merkle_root, tx_index } = v;
+        (light_client_id, txid, block_hash, block_height, merkle_root, tx_index)
     }
 
     // ---------------------------------------------------------------------

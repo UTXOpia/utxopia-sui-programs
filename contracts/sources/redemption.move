@@ -2,6 +2,8 @@ module utxopia::redemption {
     use sui::object::{Self, ID, UID};
     use sui::transfer;
     use sui::tx_context::TxContext;
+    use utxopia::bitcoin;
+    use utxopia::btc_light_client::{Self, VerifiedInclusion};
     use utxopia::errors;
     use utxopia::events;
     use utxopia::pool::{Self, Pool};
@@ -84,11 +86,22 @@ module utxopia::redemption {
         pool: &Pool,
         queue: &mut RedemptionQueue,
         redemption_id: u64,
-        btc_txid: vector<u8>,
+        inclusion: VerifiedInclusion,
+        raw_tx: vector<u8>,
     ) {
         assert_cap(cap, queue);
         let request = borrow_request_mut(queue, redemption_id);
         assert!(!request.completed, errors::redemption_completed());
+
+        let (light_client_id, btc_txid, _block_hash, _height, _merkle_root, _tx_index) =
+            btc_light_client::consume_inclusion(inclusion);
+        pool::assert_light_client(pool, light_client_id);
+        assert!(bitcoin::double_sha256(&raw_tx) == btc_txid, errors::invalid_redemption());
+
+        let (found, output, _vout) = bitcoin::find_output_by_script(&raw_tx, &request.btc_script);
+        assert!(found, errors::invalid_redemption());
+        assert!(bitcoin::output_value(&output) == request.amount_sats, errors::invalid_redemption());
+
         request.completed = true;
         events::redemption_completed(pool::pool_id(pool), redemption_id, btc_txid);
     }

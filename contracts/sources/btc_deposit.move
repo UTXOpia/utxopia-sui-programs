@@ -58,7 +58,6 @@ module utxopia::btc_deposit {
     /// - `sweep_raw_tx`: the SPV-included tx paying the pool (legacy-serialized).
     /// - `deposit_raw_tx`: the user tx carrying the OP_RETURN; ignored if `direct_to_pool`.
     /// - `direct_to_pool`: true ⇒ the sweep IS the deposit tx.
-    /// - `pool_script`: if non-empty, the credited output must pay exactly this script.
     public fun complete_deposit(
         pool: &mut Pool,
         registry: &mut BtcDepositRegistry,
@@ -68,7 +67,6 @@ module utxopia::btc_deposit {
         sweep_raw_tx: vector<u8>,
         deposit_raw_tx: vector<u8>,
         direct_to_pool: bool,
-        pool_script: vector<u8>,
     ) {
         pool::assert_not_paused(pool);
         // Pin canonical companions so a caller can't pass a fresh registry/tree to bypass
@@ -78,8 +76,9 @@ module utxopia::btc_deposit {
         pool::assert_utxo_set(pool, object::id(utxo_set));
 
         // Module 01 already enforced canonical chain + >= required confirmations.
-        let (sweep_txid, _block_hash, _height, _merkle_root, _tx_index) =
+        let (light_client_id, sweep_txid, _block_hash, _height, _merkle_root, _tx_index) =
             btc_light_client::consume_inclusion(inclusion);
+        pool::assert_light_client(pool, light_client_id);
 
         // Bind the supplied raw tx to the SPV-proven txid (else a caller could prove
         // inclusion of one txid and feed unrelated bytes).
@@ -97,11 +96,8 @@ module utxopia::btc_deposit {
         assert!(has_op_return, errors::invalid_stealth_op_return());
 
         // Credited output from the SWEEP tx (the SPV-proven tx paying the pool).
-        let (found_out, credited, sweep_vout) = if (vector::length(&pool_script) > 0) {
-            bitcoin::find_output_by_script(&sweep_raw_tx, &pool_script)
-        } else {
-            bitcoin::find_deposit_output_with_vout(&sweep_raw_tx)
-        };
+        let pool_script = pool::btc_pool_script(pool);
+        let (found_out, credited, sweep_vout) = bitcoin::find_output_by_script(&sweep_raw_tx, &pool_script);
         assert!(found_out, errors::invalid_btc_deposit());
         let amount_sats = bitcoin::output_value(&credited);
 

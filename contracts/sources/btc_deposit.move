@@ -22,7 +22,6 @@ module utxopia::btc_deposit {
 
     const UTXO_UNSPENT: u8 = 0;
     const UTXO_RESERVED: u8 = 1;
-    const UTXO_SPENT: u8 = 2;
 
     /// O(1) outpoint dedup, keyed by outpoint_key(deposit_txid, deposit_vout).
     public struct BtcDepositRegistry has key {
@@ -213,7 +212,7 @@ module utxopia::btc_deposit {
         record.amount_sats
     }
 
-    public(package) fun spend_reserved_utxo(
+    public(package) fun remove_reserved_utxo(
         utxo_set: &mut UtxoSet,
         pool_id: address,
         txid: vector<u8>,
@@ -221,11 +220,29 @@ module utxopia::btc_deposit {
     ): u64 {
         let key = outpoint_key(&txid, vout);
         assert!(object_table::contains(&utxo_set.utxos, key), errors::invalid_redemption());
-        let record = object_table::borrow_mut(&mut utxo_set.utxos, key);
-        assert!(record.pool_id == pool_id, errors::invalid_redemption());
-        assert!(record.status == UTXO_RESERVED, errors::invalid_redemption());
-        record.status = UTXO_SPENT;
-        record.amount_sats
+        let record = object_table::remove(&mut utxo_set.utxos, key);
+        let UtxoRecord {
+            id,
+            pool_id: record_pool_id,
+            txid: _,
+            vout: _,
+            amount_sats,
+            status,
+        } = record;
+        assert!(record_pool_id == pool_id, errors::invalid_redemption());
+        assert!(status == UTXO_RESERVED, errors::invalid_redemption());
+        object::delete(id);
+        amount_sats
+    }
+
+    #[test_only]
+    public fun test_remove_reserved_utxo(
+        utxo_set: &mut UtxoSet,
+        pool_id: address,
+        txid: vector<u8>,
+        vout: u32,
+    ): u64 {
+        remove_reserved_utxo(utxo_set, pool_id, txid, vout)
     }
 
     public(package) fun add_pool_utxo(

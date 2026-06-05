@@ -167,6 +167,14 @@ module utxopia::redemption_tests {
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
 
         assert!(btc_deposit::test_utxo_status(&utxo_set, bytes(32, 0x44), 7) == 1, 0);
+        let removed_amount = btc_deposit::test_remove_reserved_utxo(
+            &mut utxo_set,
+            pool::pool_id(&pool),
+            bytes(32, 0x44),
+            7,
+        );
+        assert!(removed_amount == 60_000, 1);
+        assert!(!btc_deposit::contains_utxo(&utxo_set, bytes(32, 0x44), 7), 2);
 
         test_scenario::return_to_sender(&scenario, cap);
         test_scenario::return_shared(pool);

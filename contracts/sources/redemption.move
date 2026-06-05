@@ -205,41 +205,51 @@ module utxopia::redemption {
         assert_cap(cap, queue);
         pool::assert_utxo_set(pool, object::id(utxo_set));
         let pool_id = pool::pool_id(pool);
-        let request = borrow_request_mut(queue, redemption_id);
-        assert!(!request.completed, errors::redemption_completed());
-        assert!(request.processing, errors::invalid_redemption());
-        assert!(request.pool_id == pool_id, errors::invalid_redemption());
+        let (btc_script, amount_sats, max_fee_sats, total_input_sats, selected_txids, selected_vouts) = {
+            let request = borrow_request_mut(queue, redemption_id);
+            assert!(!request.completed, errors::redemption_completed());
+            assert!(request.processing, errors::invalid_redemption());
+            assert!(request.pool_id == pool_id, errors::invalid_redemption());
+            (
+                request.btc_script,
+                request.amount_sats,
+                request.max_fee_sats,
+                request.total_input_sats,
+                request.selected_txids,
+                request.selected_vouts,
+            )
+        };
 
         let (light_client_id, btc_txid, _block_hash, _height, _merkle_root, _tx_index) =
             btc_light_client::consume_inclusion(inclusion);
         pool::assert_light_client(pool, light_client_id);
         assert!(bitcoin::double_sha256(&raw_tx) == btc_txid, errors::invalid_redemption());
 
-        let (found, output, _vout) = bitcoin::find_output_by_script(&raw_tx, &request.btc_script);
+        let (found, output, _vout) = bitcoin::find_output_by_script(&raw_tx, &btc_script);
         assert!(found, errors::invalid_redemption());
-        assert!(bitcoin::output_value(&output) == request.amount_sats, errors::invalid_redemption());
+        assert!(bitcoin::output_value(&output) == amount_sats, errors::invalid_redemption());
 
         let mut selected_total = 0u64;
         let mut i = 0;
-        while (i < vector::length(&request.selected_txids)) {
+        while (i < vector::length(&selected_txids)) {
             assert!(
-                bitcoin::has_input_with_prev_outpoint(&raw_tx, &request.selected_txids[i], request.selected_vouts[i]),
+                bitcoin::has_input_with_prev_outpoint(&raw_tx, &selected_txids[i], selected_vouts[i]),
                 errors::invalid_redemption(),
             );
-            selected_total = selected_total + btc_deposit::spend_reserved_utxo(
+            selected_total = selected_total + btc_deposit::remove_reserved_utxo(
                 utxo_set,
                 pool_id,
-                request.selected_txids[i],
-                request.selected_vouts[i],
+                selected_txids[i],
+                selected_vouts[i],
             );
             i = i + 1;
         };
-        assert!(selected_total == request.total_input_sats, errors::invalid_redemption());
+        assert!(selected_total == total_input_sats, errors::invalid_redemption());
 
         let total_outputs = bitcoin::sum_outputs(&raw_tx);
-        assert!(request.total_input_sats >= total_outputs, errors::invalid_redemption());
-        let miner_fee = request.total_input_sats - total_outputs;
-        assert!(miner_fee <= request.max_fee_sats, errors::invalid_redemption());
+        assert!(total_input_sats >= total_outputs, errors::invalid_redemption());
+        let miner_fee = total_input_sats - total_outputs;
+        assert!(miner_fee <= max_fee_sats, errors::invalid_redemption());
 
         let pool_script = pool::btc_pool_script(pool);
         let (has_change, change_output, change_vout) = bitcoin::find_output_by_script(&raw_tx, &pool_script);
@@ -254,8 +264,8 @@ module utxopia::redemption {
             );
         };
 
-        request.completed = true;
         events::redemption_completed(pool_id, redemption_id, btc_txid);
+        remove_request(queue, redemption_id, pool_id);
     }
 
     public(package) fun is_pending(queue: &RedemptionQueue, redemption_id: u64): bool {
@@ -287,6 +297,27 @@ module utxopia::redemption {
     fun borrow_request_mut(queue: &mut RedemptionQueue, redemption_id: u64): &mut RedemptionRequest {
         assert!(object_table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
         object_table::borrow_mut(&mut queue.requests, redemption_id)
+    }
+
+    fun remove_request(queue: &mut RedemptionQueue, redemption_id: u64, pool_id: address) {
+        assert!(object_table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
+        let request = object_table::remove(&mut queue.requests, redemption_id);
+        let RedemptionRequest {
+            id,
+            request_id,
+            pool_id: request_pool_id,
+            btc_script: _,
+            amount_sats: _,
+            max_fee_sats: _,
+            processing: _,
+            total_input_sats: _,
+            selected_txids: _,
+            selected_vouts: _,
+            completed: _,
+        } = request;
+        assert!(request_id == redemption_id, errors::invalid_redemption());
+        assert!(request_pool_id == pool_id, errors::invalid_redemption());
+        object::delete(id);
     }
 
     fun enqueue_redemption_request(

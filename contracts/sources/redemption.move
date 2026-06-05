@@ -1,6 +1,8 @@
 module utxopia::redemption {
+    use std::hash;
     use sui::object::{Self, ID, UID};
     use sui::object_table::{Self, ObjectTable};
+    use sui::poseidon;
     use sui::transfer;
     use sui::tx_context::TxContext;
     use utxopia::bitcoin;
@@ -15,6 +17,10 @@ module utxopia::redemption {
 
     const MAX_PUBLIC_REDEMPTIONS: u8 = 3;
     const MAX_SELECTED_UTXOS: u64 = 16;
+    const BOUND_PARAMS_REDEEM_FLAG: u8 = 2;
+    const SUI_BOUND_CHAIN_ID: u64 = 103;
+    const BN254_FR: u256 =
+        0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001;
 
     /// Authority over exactly one RedemptionQueue (bound by `queue_id`).
     public struct RedemptionCap has key {
@@ -93,6 +99,7 @@ module utxopia::redemption {
         btc_scripts: vector<vector<u8>>,
         amounts_sats: vector<u64>,
         max_fees_sats: vector<u64>,
+        stealth_data: vector<vector<u8>>,
         ctx: &mut TxContext,
     ) {
         pool::assert_not_paused(pool);
@@ -107,7 +114,13 @@ module utxopia::redemption {
         assert!(btc_scripts.length() == (n_public_outputs as u64), errors::invalid_redemption());
         assert!(amounts_sats.length() == (n_public_outputs as u64), errors::invalid_redemption());
         assert!(max_fees_sats.length() == (n_public_outputs as u64), errors::invalid_redemption());
+        let n_tree_outputs = n_outputs - n_public_outputs;
+        assert!(stealth_data.length() == (n_tree_outputs as u64), errors::invalid_join_split());
         assert_bound_public_inputs(&public_inputs, n_inputs, n_outputs, &nullifiers_in, &commitments_out);
+        let bound_params_hash = compute_redeem_bound_params_hash(&btc_scripts, &stealth_data);
+        assert_public_input_at(&public_inputs, 1, &bound_params_hash);
+
+        assert_public_redeem_commitments(pool, n_tree_outputs, n_public_outputs, &commitments_out, &amounts_sats);
 
         let proof_root = extract_public_input(&public_inputs, 0);
         assert!(commitment_tree::is_valid_root_bytes(tree, &proof_root), errors::stale_merkle_root());
@@ -125,13 +138,12 @@ module utxopia::redemption {
         let pool_id = pool::pool_id(pool);
         events::join_split_verified(pool_id, n_inputs, n_outputs, vk_hash);
 
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < nullifiers_in.length()) {
             nullifier::record_spend(pool_id, nullifiers, nullifiers_in[i]);
             i = i + 1;
         };
 
-        let n_tree_outputs = n_outputs - n_public_outputs;
         let mut j = 0;
         while (j < (n_tree_outputs as u64)) {
             commitment_tree::insert_commitment_bytes(tree, pool_id, commitments_out[j]);
@@ -178,7 +190,7 @@ module utxopia::redemption {
         assert!(estimated_miner_fee_sats <= request.max_fee_sats, errors::invalid_redemption());
 
         let mut total_input_sats = 0u64;
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < vector::length(&selected_txids)) {
             let amount = btc_deposit::reserve_utxo(utxo_set, pool_id, selected_txids[i], selected_vouts[i]);
             total_input_sats = total_input_sats + amount;
@@ -230,7 +242,7 @@ module utxopia::redemption {
         assert!(bitcoin::output_value(&output) == amount_sats, errors::invalid_redemption());
 
         let mut selected_total = 0u64;
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < vector::length(&selected_txids)) {
             assert!(
                 bitcoin::has_input_with_prev_outpoint(&raw_tx, &selected_txids[i], selected_vouts[i]),
@@ -362,7 +374,7 @@ module utxopia::redemption {
         let expected_len = ((2 + (n_inputs as u64) + (n_outputs as u64)) * 32);
         assert!(public_inputs.length() == expected_len, errors::invalid_join_split());
 
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < (n_inputs as u64)) {
             assert_public_input_at(public_inputs, 2 + i, &nullifiers_in[i]);
             i = i + 1;
@@ -378,7 +390,7 @@ module utxopia::redemption {
     fun assert_public_input_at(public_inputs: &vector<u8>, index: u64, expected: &vector<u8>) {
         assert!(expected.length() == 32, errors::invalid_join_split());
         let start = index * 32;
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < 32) {
             assert!(*public_inputs.borrow(start + i) == *expected.borrow(i), errors::invalid_join_split());
             i = i + 1;
@@ -388,11 +400,102 @@ module utxopia::redemption {
     fun extract_public_input(public_inputs: &vector<u8>, index: u64): vector<u8> {
         let start = index * 32;
         let mut out = vector[];
-        let mut i = 0;
+        let mut i = 0u64;
         while (i < 32) {
             vector::push_back(&mut out, *public_inputs.borrow(start + i));
             i = i + 1;
         };
         out
+    }
+
+    fun assert_public_redeem_commitments(
+        pool: &Pool,
+        n_tree_outputs: u8,
+        n_public_outputs: u8,
+        commitments_out: &vector<vector<u8>>,
+        amounts_sats: &vector<u64>,
+    ) {
+        let mut i = 0u64;
+        while (i < (n_public_outputs as u64)) {
+            let amount = *amounts_sats.borrow(i);
+            let expected = public_redeem_commitment(pool, amount);
+            assert!(
+                *commitments_out.borrow((n_tree_outputs as u64) + i) == expected,
+                errors::invalid_commitment(),
+            );
+            i = i + 1;
+        };
+    }
+
+    fun public_redeem_commitment(pool: &Pool, amount_sats: u64): vector<u8> {
+        let commitment = poseidon::poseidon_bn254(&vector[
+            0u256,
+            pool::btc_token_id(pool),
+            (amount_sats as u256),
+        ]);
+        commitment_tree::field_to_be_bytes(commitment)
+    }
+
+    fun compute_redeem_bound_params_hash(
+        btc_scripts: &vector<vector<u8>>,
+        stealth_data: &vector<vector<u8>>,
+    ): vector<u8> {
+        let mut scripts = vector[];
+        let mut i = 0u64;
+        while (i < btc_scripts.length()) {
+            vector::append(&mut scripts, *btc_scripts.borrow(i));
+            i = i + 1;
+        };
+        let script_hash = hash::sha2_256(scripts);
+        let stealth_hash = compute_stealth_data_hash(stealth_data);
+
+        let mut payload = vector[];
+        vector::append(&mut payload, vector[0, 0, 0, 0]);
+        vector::push_back(&mut payload, BOUND_PARAMS_REDEEM_FLAG);
+        vector::append(&mut payload, script_hash);
+        append_u64_le(&mut payload, SUI_BOUND_CHAIN_ID);
+        vector::append(&mut payload, stealth_hash);
+
+        let digest = hash::sha2_256(payload);
+        commitment_tree::field_to_be_bytes(be_bytes_to_u256(&digest) % BN254_FR)
+    }
+
+    fun compute_stealth_data_hash(stealth_data: &vector<vector<u8>>): vector<u8> {
+        let mut data = vector[];
+        let mut i = 0u64;
+        while (i < stealth_data.length()) {
+            vector::append(&mut data, *stealth_data.borrow(i));
+            i = i + 1;
+        };
+        hash::sha2_256(data)
+    }
+
+    fun append_u64_le(out: &mut vector<u8>, value: u64) {
+        let mut i = 0u64;
+        while (i < 8) {
+            vector::push_back(out, ((value >> ((i * 8) as u8)) & 0xff) as u8);
+            i = i + 1;
+        };
+    }
+
+    fun be_bytes_to_u256(b: &vector<u8>): u256 {
+        assert!(b.length() == 32, errors::invalid_commitment());
+        let mut acc: u256 = 0;
+        let mut i = 0u64;
+        while (i < 32) {
+            acc = (acc << 8) | (*b.borrow(i) as u256);
+            i = i + 1;
+        };
+        acc
+    }
+
+    #[test_only]
+    public fun test_public_redeem_commitment(pool: &Pool, amount_sats: u64): vector<u8> {
+        public_redeem_commitment(pool, amount_sats)
+    }
+
+    #[test_only]
+    public fun test_redeem_bound_params_hash(btc_scripts: vector<vector<u8>>): vector<u8> {
+        compute_redeem_bound_params_hash(&btc_scripts, &vector[])
     }
 }

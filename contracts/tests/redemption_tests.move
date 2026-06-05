@@ -47,7 +47,12 @@ module utxopia::redemption_tests {
     }
 
     fun public_inputs(nullifier_in: vector<u8>, commitment_out: vector<u8>): vector<u8> {
-        let mut out = bytes(64, 0);
+        public_inputs_with_bound(bytes(32, 0), nullifier_in, commitment_out)
+    }
+
+    fun public_inputs_with_bound(bound_params_hash: vector<u8>, nullifier_in: vector<u8>, commitment_out: vector<u8>): vector<u8> {
+        let mut out = bytes(32, 0);
+        vector::append(&mut out, bound_params_hash);
         vector::append(&mut out, nullifier_in);
         vector::append(&mut out, commitment_out);
         out
@@ -81,6 +86,7 @@ module utxopia::redemption_tests {
             vector[],
             vector[bytes(32, 0x01)],
             vector[bytes(32, 0x02)],
+            vector[],
             vector[],
             vector[],
             vector[],
@@ -127,6 +133,109 @@ module utxopia::redemption_tests {
             vector[bytes(34, 0x51)],
             vector[50_000],
             vector[1_000],
+            vector[],
+            test_scenario::ctx(&mut scenario),
+        );
+
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 13)]
+    fun redeem_rejects_mutated_btc_script() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
+
+        let proof_script = bytes(34, 0x51);
+        let submitted_script = bytes(34, 0x52);
+        let amount = 50_000;
+        let commitment = redemption::test_public_redeem_commitment(&pool, amount);
+        let commitments_out = vector[redemption::test_public_redeem_commitment(&pool, amount)];
+        let bound = redemption::test_redeem_bound_params_hash(vector[proof_script]);
+
+        redemption::redeem(
+            &mut pool,
+            &mut tree,
+            &mut nullifiers,
+            &vk_registry,
+            &mut queue,
+            1,
+            1,
+            1,
+            bytes(32, 0xaa),
+            public_inputs_with_bound(bound, bytes(32, 0x01), commitment),
+            vector[],
+            vector[bytes(32, 0x01)],
+            commitments_out,
+            vector[submitted_script],
+            vector[amount],
+            vector[1_000],
+            vector[],
+            test_scenario::ctx(&mut scenario),
+        );
+
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 3)]
+    fun redeem_rejects_mutated_public_amount() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
+
+        let script = bytes(34, 0x51);
+        let proof_amount = 50_000;
+        let submitted_amount = 60_000;
+        let commitment = redemption::test_public_redeem_commitment(&pool, proof_amount);
+        let commitments_out = vector[redemption::test_public_redeem_commitment(&pool, proof_amount)];
+        let bound = redemption::test_redeem_bound_params_hash(vector[script]);
+
+        redemption::redeem(
+            &mut pool,
+            &mut tree,
+            &mut nullifiers,
+            &vk_registry,
+            &mut queue,
+            1,
+            1,
+            1,
+            bytes(32, 0xaa),
+            public_inputs_with_bound(bound, bytes(32, 0x01), commitment),
+            vector[],
+            vector[bytes(32, 0x01)],
+            commitments_out,
+            vector[bytes(34, 0x51)],
+            vector[submitted_amount],
+            vector[1_000],
+            vector[],
             test_scenario::ctx(&mut scenario),
         );
 

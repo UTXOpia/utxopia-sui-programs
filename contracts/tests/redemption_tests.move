@@ -84,6 +84,7 @@ module utxopia::redemption_tests {
             vector[],
             vector[],
             vector[],
+            test_scenario::ctx(&mut scenario),
         );
 
         test_scenario::return_shared(pool);
@@ -126,6 +127,7 @@ module utxopia::redemption_tests {
             vector[bytes(34, 0x51)],
             vector[50_000],
             vector[1_000],
+            test_scenario::ctx(&mut scenario),
         );
 
         test_scenario::return_shared(pool);
@@ -153,8 +155,15 @@ module utxopia::redemption_tests {
 
         let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
         let txid = bytes(32, 0x44);
-        btc_deposit::test_add_utxo(&mut utxo_set, txid, 7, 60_000);
-        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
+        btc_deposit::test_add_utxo(
+            &mut utxo_set,
+            pool::pool_id(&pool),
+            txid,
+            7,
+            60_000,
+            test_scenario::ctx(&mut scenario),
+        );
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000, test_scenario::ctx(&mut scenario));
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
 
         assert!(btc_deposit::test_utxo_status(&utxo_set, bytes(32, 0x44), 7) == 1, 0);
@@ -185,9 +194,16 @@ module utxopia::redemption_tests {
 
         let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
         let txid = bytes(32, 0x44);
-        btc_deposit::test_add_utxo(&mut utxo_set, txid, 7, 60_000);
-        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
-        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x52), 50_000, 1_000);
+        btc_deposit::test_add_utxo(
+            &mut utxo_set,
+            pool::pool_id(&pool),
+            txid,
+            7,
+            60_000,
+            test_scenario::ctx(&mut scenario),
+        );
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000, test_scenario::ctx(&mut scenario));
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x52), 50_000, 1_000, test_scenario::ctx(&mut scenario));
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 1, vector[bytes(32, 0x44)], vector[7], 500);
 

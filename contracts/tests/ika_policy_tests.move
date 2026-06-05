@@ -32,7 +32,7 @@ module utxopia::ika_policy_tests {
             let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
             let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
 
-            redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
+            redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000, test_scenario::ctx(&mut scenario));
             ika_policy::approve_signing(&cap, &pool, &queue, DWALLET_CAP, 0, 800, bytes(32, 0x7a), test_scenario::ctx(&mut scenario));
 
             test_scenario::return_to_sender(&scenario, cap);
@@ -77,7 +77,7 @@ module utxopia::ika_policy_tests {
         let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
 
         // amount > 1 BTC
-        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 200_000_000, 1_000);
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 200_000_000, 1_000, test_scenario::ctx(&mut scenario));
         ika_policy::approve_signing(&cap, &pool, &queue, DWALLET_CAP, 0, 500, bytes(32, 0x7a), test_scenario::ctx(&mut scenario)); // aborts policy_rejected (7)
 
         test_scenario::return_to_sender(&scenario, cap);
@@ -97,7 +97,7 @@ module utxopia::ika_policy_tests {
         let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
 
         // request allows a high per-request fee, but the policy cap (50k) still rejects 60k
-        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 100_000);
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 100_000, test_scenario::ctx(&mut scenario));
         ika_policy::approve_signing(&cap, &pool, &queue, DWALLET_CAP, 0, 60_000, bytes(32, 0x7a), test_scenario::ctx(&mut scenario)); // aborts policy_rejected (7)
 
         test_scenario::return_to_sender(&scenario, cap);
@@ -115,7 +115,7 @@ module utxopia::ika_policy_tests {
             let mut pool = test_scenario::take_shared<Pool>(&scenario);
             let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
             let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
-            redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
+            redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000, test_scenario::ctx(&mut scenario));
             ika_policy::approve_signing(&cap, &pool, &queue, DWALLET_CAP, 0, 800, bytes(32, 0x7a), test_scenario::ctx(&mut scenario));
             test_scenario::return_to_sender(&scenario, cap);
             test_scenario::return_shared(pool);

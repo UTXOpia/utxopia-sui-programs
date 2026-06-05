@@ -67,7 +67,7 @@ module utxopia::btc_deposit_tests {
         let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
         btc_deposit::complete_deposit(
             &mut pool, &mut registry, &mut utxo_set, &mut tree,
-            inclusion, sweep_tx, vector[], true,
+            inclusion, sweep_tx, vector[], true, test_scenario::ctx(&mut scenario),
         );
 
         assert!(commitment_tree::next_index(&tree) == 1, 0);
@@ -130,11 +130,11 @@ module utxopia::btc_deposit_tests {
         let block_hash = lc::test_double_sha256(block);
 
         let inc1 = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
-        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc1, sweep_tx, vector[], true);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc1, sweep_tx, vector[], true, test_scenario::ctx(&mut scenario));
 
         // same outpoint again -> E_BTC_DEPOSIT_ALREADY_CLAIMED (15)
         let inc2 = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
-        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc2, sweep_tx, vector[], true);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inc2, sweep_tx, vector[], true, test_scenario::ctx(&mut scenario));
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -169,7 +169,7 @@ module utxopia::btc_deposit_tests {
         let block_hash = lc::test_double_sha256(block);
 
         let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
-        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inclusion, sweep_tx, vector[], true); // aborts 40
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inclusion, sweep_tx, vector[], true, test_scenario::ctx(&mut scenario)); // aborts 40
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -202,7 +202,7 @@ module utxopia::btc_deposit_tests {
         let block_hash = lc::test_double_sha256(block);
 
         let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
-        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inclusion, sweep_tx, vector[], true);
+        btc_deposit::complete_deposit(&mut pool, &mut registry, &mut utxo_set, &mut tree, inclusion, sweep_tx, vector[], true, test_scenario::ctx(&mut scenario));
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);

@@ -1,6 +1,6 @@
 module utxopia::redemption {
     use sui::object::{Self, ID, UID};
-    use sui::table::{Self, Table};
+    use sui::object_table::{Self, ObjectTable};
     use sui::transfer;
     use sui::tx_context::TxContext;
     use utxopia::bitcoin;
@@ -24,11 +24,12 @@ module utxopia::redemption {
 
     public struct RedemptionQueue has key {
         id: UID,
-        requests: Table<u64, RedemptionRequest>,
+        requests: ObjectTable<u64, RedemptionRequest>,
     }
 
-    public struct RedemptionRequest has store, drop {
-        id: u64,
+    public struct RedemptionRequest has key, store {
+        id: UID,
+        request_id: u64,
         pool_id: address,
         /// Raw destination scriptPubKey (NOT a hash / bech32). Pins the destination so
         /// completion can byte-compare it against the SPV-verified broadcast output.
@@ -45,7 +46,7 @@ module utxopia::redemption {
     public fun initialize_queue(ctx: &mut TxContext) {
         let queue = RedemptionQueue {
             id: object::new(ctx),
-            requests: table::new(ctx),
+            requests: object_table::new(ctx),
         };
         let cap = RedemptionCap { id: object::new(ctx), queue_id: object::id(&queue) };
 
@@ -69,9 +70,10 @@ module utxopia::redemption {
         btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
+        ctx: &mut TxContext,
     ) {
         pool::assert_not_paused(pool);
-        enqueue_redemption_request(pool, queue, btc_script, amount_sats, max_fee_sats);
+        enqueue_redemption_request(pool, queue, btc_script, amount_sats, max_fee_sats, ctx);
     }
 
     public fun redeem(
@@ -91,6 +93,7 @@ module utxopia::redemption {
         btc_scripts: vector<vector<u8>>,
         amounts_sats: vector<u64>,
         max_fees_sats: vector<u64>,
+        ctx: &mut TxContext,
     ) {
         pool::assert_not_paused(pool);
         pool::assert_commitment_tree(pool, object::id(tree));
@@ -145,7 +148,7 @@ module utxopia::redemption {
             assert!(btc_script.length() > 0, errors::invalid_redemption());
 
             total_redeemed = total_redeemed + (amount_sats as u128);
-            enqueue_redemption_request(pool, queue, btc_script, amount_sats, max_fee_sats);
+            enqueue_redemption_request(pool, queue, btc_script, amount_sats, max_fee_sats, ctx);
             k = k + 1;
         };
         pool::record_redemption_request(pool, total_redeemed);
@@ -164,8 +167,9 @@ module utxopia::redemption {
         assert_cap(cap, queue);
         pool::assert_not_paused(pool);
         pool::assert_utxo_set(pool, object::id(utxo_set));
+        let pool_id = pool::pool_id(pool);
         let request = borrow_request_mut(queue, redemption_id);
-        assert!(request.pool_id == pool::pool_id(pool), errors::invalid_redemption());
+        assert!(request.pool_id == pool_id, errors::invalid_redemption());
         assert!(!request.completed, errors::redemption_completed());
         assert!(!request.processing, errors::invalid_redemption());
         assert!(vector::length(&selected_txids) > 0, errors::invalid_redemption());
@@ -176,7 +180,7 @@ module utxopia::redemption {
         let mut total_input_sats = 0u64;
         let mut i = 0;
         while (i < vector::length(&selected_txids)) {
-            let amount = btc_deposit::reserve_utxo(utxo_set, selected_txids[i], selected_vouts[i]);
+            let amount = btc_deposit::reserve_utxo(utxo_set, pool_id, selected_txids[i], selected_vouts[i]);
             total_input_sats = total_input_sats + amount;
             i = i + 1;
         };
@@ -196,13 +200,15 @@ module utxopia::redemption {
         redemption_id: u64,
         inclusion: VerifiedInclusion,
         raw_tx: vector<u8>,
+        ctx: &mut TxContext,
     ) {
         assert_cap(cap, queue);
         pool::assert_utxo_set(pool, object::id(utxo_set));
+        let pool_id = pool::pool_id(pool);
         let request = borrow_request_mut(queue, redemption_id);
         assert!(!request.completed, errors::redemption_completed());
         assert!(request.processing, errors::invalid_redemption());
-        assert!(request.pool_id == pool::pool_id(pool), errors::invalid_redemption());
+        assert!(request.pool_id == pool_id, errors::invalid_redemption());
 
         let (light_client_id, btc_txid, _block_hash, _height, _merkle_root, _tx_index) =
             btc_light_client::consume_inclusion(inclusion);
@@ -222,6 +228,7 @@ module utxopia::redemption {
             );
             selected_total = selected_total + btc_deposit::spend_reserved_utxo(
                 utxo_set,
+                pool_id,
                 request.selected_txids[i],
                 request.selected_vouts[i],
             );
@@ -237,11 +244,18 @@ module utxopia::redemption {
         let pool_script = pool::btc_pool_script(pool);
         let (has_change, change_output, change_vout) = bitcoin::find_output_by_script(&raw_tx, &pool_script);
         if (has_change) {
-            btc_deposit::add_pool_utxo(utxo_set, btc_txid, change_vout, bitcoin::output_value(&change_output));
+            btc_deposit::add_pool_utxo(
+                utxo_set,
+                pool_id,
+                btc_txid,
+                change_vout,
+                bitcoin::output_value(&change_output),
+                ctx,
+            );
         };
 
         request.completed = true;
-        events::redemption_completed(pool::pool_id(pool), redemption_id, btc_txid);
+        events::redemption_completed(pool_id, redemption_id, btc_txid);
     }
 
     public(package) fun is_pending(queue: &RedemptionQueue, redemption_id: u64): bool {
@@ -266,13 +280,13 @@ module utxopia::redemption {
     }
 
     fun borrow_request(queue: &RedemptionQueue, redemption_id: u64): &RedemptionRequest {
-        assert!(table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
-        table::borrow(&queue.requests, redemption_id)
+        assert!(object_table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
+        object_table::borrow(&queue.requests, redemption_id)
     }
 
     fun borrow_request_mut(queue: &mut RedemptionQueue, redemption_id: u64): &mut RedemptionRequest {
-        assert!(table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
-        table::borrow_mut(&mut queue.requests, redemption_id)
+        assert!(object_table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
+        object_table::borrow_mut(&mut queue.requests, redemption_id)
     }
 
     fun enqueue_redemption_request(
@@ -281,14 +295,16 @@ module utxopia::redemption {
         btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
+        ctx: &mut TxContext,
     ): u64 {
         assert!(amount_sats > 0, errors::invalid_redemption());
         assert!(vector::length(&btc_script) > 0, errors::invalid_redemption());
 
         let redemption_id = pool::allocate_redemption_id(pool);
         let pool_id = pool::pool_id(pool);
-        table::add(&mut queue.requests, redemption_id, RedemptionRequest {
-            id: redemption_id,
+        object_table::add(&mut queue.requests, redemption_id, RedemptionRequest {
+            id: object::new(ctx),
+            request_id: redemption_id,
             pool_id,
             btc_script,
             amount_sats,
@@ -300,7 +316,7 @@ module utxopia::redemption {
             completed: false,
         });
 
-        let request = table::borrow(&queue.requests, redemption_id);
+        let request = object_table::borrow(&queue.requests, redemption_id);
         events::redemption_requested(pool_id, redemption_id, request.btc_script, amount_sats, max_fee_sats);
         redemption_id
     }

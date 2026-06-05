@@ -192,6 +192,11 @@ module utxopia::pool {
         pool.total_utxo_sats = pool.total_utxo_sats + (gross_sats as u128);
     }
 
+    public(package) fun record_redemption_request(pool: &mut Pool, amount_sats: u128) {
+        assert!(pool.total_shielded >= amount_sats, errors::invalid_redemption());
+        pool.total_shielded = pool.total_shielded - amount_sats;
+    }
+
     public fun tree_depth(pool: &Pool): u64 { pool.tree_depth }
     public fun paused(pool: &Pool): bool { pool.paused }
     public fun min_deposit_sats(pool: &Pool): u64 { pool.min_deposit_sats }

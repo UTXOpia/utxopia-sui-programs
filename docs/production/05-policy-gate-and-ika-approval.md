@@ -224,11 +224,9 @@ public(package) fun request_is_pending(queue: &RedemptionQueue, id: u64): bool;
 public(package) fun request_total_input_sats(queue: &RedemptionQueue, id: u64): u64;
 ```
 
-> Migration note: the current `request_redemption` takes `btc_address_hash` (a hash) and
-> `max_fee_sats`. For destination binding we need the **raw scriptPubKey**, not a hash,
-> because completion must byte-compare the broadcast output's `script_pubkey`
-> (`complete_redemption.rs:392`). Spec 06 must change `btc_address_hash -> btc_script`.
-> This is a breaking SDK change tracked in `sui-adapter.ts:194`.
+> Current design note: production redemption requests are created by proof-checked
+> `redemption::redeem` and store the raw destination `btc_script`. Completion
+> byte-compares the broadcast output's `script_pubkey` against that pinned script.
 
 ---
 
@@ -436,7 +434,7 @@ dWalletCap/object ids (Sui `address`/`ID`, already canonical).
   `redemption.move:69-70`) prevents double-finalize.
 - **R3 — Destination substitution.** Prevented by pinning `btc_script` in the request and
   byte-comparing the SPV output at completion (`complete_redemption.rs:392-402`). This is
-  why `request_redemption` must store the raw scriptPubKey, not a hash (Section 3.2 note).
+  why redemption requests must store the raw scriptPubKey, not a hash (Section 3.2 note).
 - **R4 — Underflow / overpay accounting.** If the relayer overpays the user
   (`total_outputs > total_input_sats`) native u64 subtraction aborts. Use the explicit
   `if total_input_sats < total_outputs` guard (4.5) so an overpay is a clean policy reject,

@@ -1,8 +1,10 @@
 /**
  * Standalone localnet E2E for the Move contracts (no @utxopia/sdk dependency).
  * Drives the full trustless flow on a live validator: init -> submit_headers ->
- * (verify_tx_inclusion + complete_deposit in one PTB) -> double-claim reject ->
- * request_redemption -> approve_signing -> consume_approval -> fee-over-cap reject.
+ * (verify_tx_inclusion + complete_deposit in one PTB) -> double-claim reject.
+ *
+ * Redemption requests are now created only by `redemption::redeem`, which requires
+ * a real JoinSplit proof. Use the circuit-backed regtest flow for withdrawal tests.
  *
  * Run:
  *   RUST_LOG=off sui start --with-faucet --force-regenesis &
@@ -104,10 +106,8 @@ async function main() {
   const registry = find("::btc_deposit::BtcDepositRegistry");
   const utxoSet = find("::btc_deposit::UtxoSet");
   const light = find("::btc_light_client::LightClient");
-  const queue = find("::redemption::RedemptionQueue");
-  const redCap = find("::redemption::RedemptionCap");
   const adminCap = find("::pool::AdminCap");
-  console.log({ pool, tree, registry, utxoSet, light, queue, redCap });
+  console.log({ pool, tree, registry, utxoSet, light });
 
   // ---- Tx1b: pin the deposit-path companion objects to the pool (AdminCap-gated) ----
   // This harness exercises complete_deposit + redemption only, so it pins just the
@@ -183,48 +183,7 @@ async function main() {
   });
   await execExpectAbort(t4, "double-claim", 15);
 
-  // ---- Redemption + policy flow ----
-  const btcScript = p2tr(0x33); // raw destination scriptPubKey
-  const sighash = fill(32, 0x7a);
-
-  const t5 = new Transaction();
-  t5.moveCall({
-    target: `${PKG}::redemption::request_redemption`,
-    arguments: [t5.object(redCap), t5.object(pool), t5.object(queue), vecU8(t5, btcScript), t5.pure.u64(30_000n), t5.pure.u64(1_000n)],
-  });
-  await exec(t5, "request_redemption");
-
-  const t6 = new Transaction();
-  t6.moveCall({
-    target: `${PKG}::ika_policy::approve_signing`,
-    arguments: [t6.object(redCap), t6.object(pool), t6.object(queue), t6.pure.address("0xdcab"), t6.pure.u64(0n), t6.pure.u64(800n), vecU8(t6, sighash)],
-  });
-  const r6 = await exec(t6, "approve_signing");
-  const approval = (r6.objectChanges as any[]).find((c) => c.type === "created" && c.objectType?.endsWith("::ika_policy::SigningApproval"))?.objectId as string;
-  console.log("  SigningApproval:", approval);
-
-  const t7 = new Transaction();
-  t7.moveCall({
-    target: `${PKG}::ika_policy::consume_approval`,
-    arguments: [t7.object(redCap), t7.object(pool), t7.object(queue), t7.object(approval)],
-  });
-  await exec(t7, "consume_approval");
-
-  // policy rejection: fee over the 50k cap -> abort 7
-  const t8 = new Transaction();
-  t8.moveCall({
-    target: `${PKG}::redemption::request_redemption`,
-    arguments: [t8.object(redCap), t8.object(pool), t8.object(queue), vecU8(t8, btcScript), t8.pure.u64(20_000n), t8.pure.u64(100_000n)],
-  });
-  await exec(t8, "request_redemption #2");
-  const t9 = new Transaction();
-  t9.moveCall({
-    target: `${PKG}::ika_policy::approve_signing`,
-    arguments: [t9.object(redCap), t9.object(pool), t9.object(queue), t9.pure.address("0xdcab"), t9.pure.u64(1n), t9.pure.u64(60_000n), vecU8(t9, sighash)],
-  });
-  await execExpectAbort(t9, "fee-over-cap", 7);
-
-  console.log("\n✅ E2E PASS (live validator): deposit credited; double-claim rejected (15); redemption approve+consume; fee-over-cap rejected (7).");
+  console.log("\n✅ E2E PASS (live validator): deposit credited; double-claim rejected (15).");
 }
 
 main().catch((e) => { console.error("E2E ERROR:", e); process.exit(1); });

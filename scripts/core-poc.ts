@@ -17,6 +17,8 @@ async function main() {
     packageId: objectId,
     poolObjectId: objectId,
     poolInitialSharedVersion: 1,
+    commitmentTreeObjectId: objectId,
+    commitmentTreeInitialSharedVersion: 1,
     adminCapObjectId: objectId,
     adminCapVersion: "1",
     adminCapDigest: "11111111111111111111111111111111",
@@ -35,7 +37,7 @@ async function main() {
     ["bitcoin deposit OP_RETURN parser", verifyBitcoinDepositEvidence],
     ["Sui Groth16 VK export", verifySuiVkeyExport],
     ["JoinSplit transfer PTB", () => verifyJoinSplitPtb(adapter)],
-    ["BTC redemption request PTB", () => verifyRedemptionPtb(adapter)],
+    ["proof-checked BTC redemption PTB", () => verifyRedemptionPtb(adapter)],
     ["Ika signing approval PTB", () => verifyIkaApprovalPtb(adapter)],
     ["BTC redemption completion PTB", () => verifyRedemptionCompletionPtb(adapter)],
   ];
@@ -140,6 +142,10 @@ async function verifyRedemptionPtb(adapter: UTXOpiaSuiAdapter): Promise<string> 
     amountSats: 1n,
     maxFeeSats: 1n,
     proof: new Uint8Array(),
+    vkHash: new Uint8Array(32).fill(4),
+    publicInputs: new Uint8Array(32 * 3).fill(5),
+    proofPoints: new Uint8Array(128).fill(6),
+    commitmentsOut: [new Uint8Array(32).fill(7)],
   });
 
   return `bytes=${tx.bytes.length}`;

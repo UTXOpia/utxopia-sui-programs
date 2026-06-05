@@ -64,11 +64,12 @@ module utxopia::ika_policy {
         assert!(redemption::is_pending(queue, redemption_id), errors::policy_rejected());
 
         let amount_sats = redemption::request_amount(queue, redemption_id);
+        let pool_id = pool::pool_id(pool);
+        assert!(redemption::request_pool_id(queue, redemption_id) == pool_id, errors::policy_rejected());
         // Fee must be within policy AND within the per-request cap the user committed to.
         assert!(estimated_miner_fee_sats <= redemption::request_max_fee(queue, redemption_id), errors::policy_rejected());
         check_redemption_signing(pool, amount_sats, estimated_miner_fee_sats);
 
-        let pool_id = pool::pool_id(pool);
         events::ika_signing_approved(pool_id, redemption_id, sighash);
 
         transfer::share_object(SigningApproval {

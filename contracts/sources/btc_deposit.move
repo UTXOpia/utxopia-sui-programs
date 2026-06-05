@@ -19,6 +19,10 @@ module utxopia::btc_deposit {
     use utxopia::events;
     use utxopia::pool::{Self, Pool};
 
+    const UTXO_UNSPENT: u8 = 0;
+    const UTXO_RESERVED: u8 = 1;
+    const UTXO_SPENT: u8 = 2;
+
     /// O(1) outpoint dedup, keyed by outpoint_key(deposit_txid, deposit_vout).
     public struct BtcDepositRegistry has key {
         id: UID,
@@ -31,7 +35,7 @@ module utxopia::btc_deposit {
         txid: vector<u8>,
         vout: u32,
         amount_sats: u64,
-        status: u8, // 0 = Unspent
+        status: u8,
     }
 
     public struct UtxoSet has key {
@@ -148,7 +152,7 @@ module utxopia::btc_deposit {
             txid: sweep_txid,
             vout: sweep_vout,
             amount_sats,
-            status: 0,
+            status: UTXO_UNSPENT,
         });
 
         // Stealth announcement (deposit): btc_deposit_verified carries the plaintext amount,
@@ -177,6 +181,51 @@ module utxopia::btc_deposit {
 
     public fun contains_utxo(utxo_set: &UtxoSet, txid: vector<u8>, vout: u32): bool {
         table::contains(&utxo_set.utxos, outpoint_key(&txid, vout))
+    }
+
+    #[test_only]
+    public fun test_add_utxo(utxo_set: &mut UtxoSet, txid: vector<u8>, vout: u32, amount_sats: u64) {
+        add_pool_utxo(utxo_set, txid, vout, amount_sats);
+    }
+
+    #[test_only]
+    public fun test_utxo_status(utxo_set: &UtxoSet, txid: vector<u8>, vout: u32): u8 {
+        let key = outpoint_key(&txid, vout);
+        table::borrow(&utxo_set.utxos, key).status
+    }
+
+    public(package) fun reserve_utxo(utxo_set: &mut UtxoSet, txid: vector<u8>, vout: u32): u64 {
+        let key = outpoint_key(&txid, vout);
+        assert!(table::contains(&utxo_set.utxos, key), errors::invalid_redemption());
+        let record = table::borrow_mut(&mut utxo_set.utxos, key);
+        assert!(record.status == UTXO_UNSPENT, errors::invalid_redemption());
+        record.status = UTXO_RESERVED;
+        record.amount_sats
+    }
+
+    public(package) fun spend_reserved_utxo(utxo_set: &mut UtxoSet, txid: vector<u8>, vout: u32): u64 {
+        let key = outpoint_key(&txid, vout);
+        assert!(table::contains(&utxo_set.utxos, key), errors::invalid_redemption());
+        let record = table::borrow_mut(&mut utxo_set.utxos, key);
+        assert!(record.status == UTXO_RESERVED, errors::invalid_redemption());
+        record.status = UTXO_SPENT;
+        record.amount_sats
+    }
+
+    public(package) fun add_pool_utxo(
+        utxo_set: &mut UtxoSet,
+        txid: vector<u8>,
+        vout: u32,
+        amount_sats: u64,
+    ) {
+        let key = outpoint_key(&txid, vout);
+        assert!(!table::contains(&utxo_set.utxos, key), errors::utxo_exists());
+        table::add(&mut utxo_set.utxos, key, UtxoRecord {
+            txid,
+            vout,
+            amount_sats,
+            status: UTXO_UNSPENT,
+        });
     }
 
     // --- helpers ---

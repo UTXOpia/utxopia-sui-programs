@@ -19,6 +19,10 @@ async function main() {
     poolInitialSharedVersion: 1,
     commitmentTreeObjectId: objectId,
     commitmentTreeInitialSharedVersion: 1,
+    utxoSetObjectId: objectId,
+    utxoSetInitialSharedVersion: 1,
+    lightClientObjectId: objectId,
+    lightClientInitialSharedVersion: 1,
     adminCapObjectId: objectId,
     adminCapVersion: "1",
     adminCapDigest: "11111111111111111111111111111111",
@@ -164,6 +168,11 @@ async function verifyRedemptionCompletionPtb(adapter: UTXOpiaSuiAdapter): Promis
   const tx = await adapter.buildCompleteRedemptionTransaction({
     redemptionId: 0,
     btcTxid: new Uint8Array(32).fill(10),
+    blockHash: new Uint8Array(32).fill(11),
+    txIndex: 0,
+    merkleSiblings: [],
+    pathBits: 0,
+    rawTx: new Uint8Array([1, 2, 3]),
   });
 
   return `bytes=${tx.bytes.length}`;

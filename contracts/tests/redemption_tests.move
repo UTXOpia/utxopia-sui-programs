@@ -2,6 +2,7 @@
 module utxopia::redemption_tests {
     use sui::object;
     use sui::test_scenario;
+    use utxopia::btc_deposit::{Self, UtxoSet};
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::nullifier::{Self, NullifierRegistry};
     use utxopia::pool::{Self, AdminCap, Pool};
@@ -23,6 +24,7 @@ module utxopia::redemption_tests {
     fun setup(scenario: &mut test_scenario::Scenario) {
         pool::initialize(16, test_scenario::ctx(scenario));
         commitment_tree::initialize(test_scenario::ctx(scenario));
+        btc_deposit::initialize_utxo_set(test_scenario::ctx(scenario));
         nullifier::initialize_registry(test_scenario::ctx(scenario));
         verifier::initialize_registry(test_scenario::ctx(scenario));
         redemption::initialize_queue(test_scenario::ctx(scenario));
@@ -32,11 +34,13 @@ module utxopia::redemption_tests {
         scenario: &test_scenario::Scenario,
         pool: &mut Pool,
         tree: &CommitmentTree,
+        utxo_set: &UtxoSet,
         nullifiers: &NullifierRegistry,
         vk_registry: &VerifyingKeyRegistry,
     ) {
         let admin = test_scenario::take_from_sender<AdminCap>(scenario);
         pool::set_commitment_tree_id(&admin, pool, object::id(tree));
+        pool::set_utxo_set_id(&admin, pool, object::id(utxo_set));
         pool::set_nullifier_registry_id(&admin, pool, object::id(nullifiers));
         pool::set_vk_registry_id(&admin, pool, object::id(vk_registry));
         test_scenario::return_to_sender(scenario, admin);
@@ -57,10 +61,11 @@ module utxopia::redemption_tests {
 
         let mut pool = test_scenario::take_shared<Pool>(&scenario);
         let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
         let mut nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
         let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
         let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
-        bind(&scenario, &mut pool, &tree, &nullifiers, &vk_registry);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
 
         redemption::redeem(
             &mut pool,
@@ -83,6 +88,7 @@ module utxopia::redemption_tests {
 
         test_scenario::return_shared(pool);
         test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
         test_scenario::return_shared(nullifiers);
         test_scenario::return_shared(vk_registry);
         test_scenario::return_shared(queue);
@@ -97,10 +103,11 @@ module utxopia::redemption_tests {
 
         let mut pool = test_scenario::take_shared<Pool>(&scenario);
         let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
         let mut nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
         let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
         let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
-        bind(&scenario, &mut pool, &tree, &nullifiers, &vk_registry);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
 
         redemption::redeem(
             &mut pool,
@@ -123,6 +130,71 @@ module utxopia::redemption_tests {
 
         test_scenario::return_shared(pool);
         test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun mark_processing_reserves_selected_utxo() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
+
+        let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
+        let txid = bytes(32, 0x44);
+        btc_deposit::test_add_utxo(&mut utxo_set, txid, 7, 60_000);
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
+        redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
+
+        assert!(btc_deposit::test_utxo_status(&utxo_set, bytes(32, 0x44), 7) == 1, 0);
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 6)]
+    fun mark_processing_rejects_reserved_utxo() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        bind(&scenario, &mut pool, &tree, &utxo_set, &nullifiers, &vk_registry);
+
+        let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
+        let txid = bytes(32, 0x44);
+        btc_deposit::test_add_utxo(&mut utxo_set, txid, 7, 60_000);
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000);
+        redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x52), 50_000, 1_000);
+        redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
+        redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 1, vector[bytes(32, 0x44)], vector[7], 500);
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
         test_scenario::return_shared(nullifiers);
         test_scenario::return_shared(vk_registry);
         test_scenario::return_shared(queue);

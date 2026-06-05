@@ -16,7 +16,7 @@ import type { NormalizedSuiUtxopiaEvent } from "./types";
  *
  * Expected payload keys are the Move event field names (snake_case) emitted by
  * `events.move`: leaf_index, commitment, root, root_index, nullifier, redemption_id,
- * amount_sats, max_fee_sats, btc_address_hash, ephemeral_pubkey, npk, btc_txid, paused.
+ * amount_sats, max_fee_sats, btc_script, ephemeral_pubkey, npk, btc_txid, paused.
  */
 export interface PoolStateProjection {
   packageId: string;
@@ -153,7 +153,7 @@ export class SqliteProjections {
              values (?, ?, ?, ?, ?, 'pending')
              on conflict(package_id, redemption_id) do nothing`,
           )
-          .run(pkg, num(p.redemption_id), str(p.amount_sats), str(p.max_fee_sats), str(p.btc_address_hash));
+          .run(pkg, num(p.redemption_id), str(p.amount_sats), str(p.max_fee_sats), str(p.btc_script));
         break;
       case "RedemptionCompleted":
         this.db

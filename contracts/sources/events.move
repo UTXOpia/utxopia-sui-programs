@@ -43,7 +43,7 @@ module utxopia::events {
     public struct RedemptionRequested has copy, drop {
         pool_id: address,
         redemption_id: u64,
-        btc_address_hash: vector<u8>,
+        btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
     }
@@ -128,14 +128,14 @@ module utxopia::events {
     public(package) fun redemption_requested(
         pool_id: address,
         redemption_id: u64,
-        btc_address_hash: vector<u8>,
+        btc_script: vector<u8>,
         amount_sats: u64,
         max_fee_sats: u64,
     ) {
         event::emit(RedemptionRequested {
             pool_id,
             redemption_id,
-            btc_address_hash,
+            btc_script,
             amount_sats,
             max_fee_sats,
         });

@@ -23,6 +23,7 @@ import {
   waitForEsplora,
   waitForTxIndexed,
   bitcoinCli,
+  fetchMerkleProof,
 } from "./lib/regtest-helpers";
 import { ROOT, readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
@@ -42,6 +43,8 @@ const packageId = requireState(state.packageId, "packageId");
 const pool = requireState(state.pool, "pool");
 const verifiedDeposit = requireState(state.lastVerifiedBtcDeposit, "lastVerifiedBtcDeposit");
 const btcDepositRegistry = requireState(state.btcDepositRegistry, "btcDepositRegistry");
+const utxoSet = requireState(state.utxoSet, "utxoSet");
+const lightClient = requireState(state.lightClient, "lightClient");
 const nullifierRegistry = requireState(state.nullifierRegistry, "nullifierRegistry");
 const redemptionQueue = requireState(state.redemptionQueue, "redemptionQueue");
 const redemptionCap = requireState(state.redemptionCap, "redemptionCap");
@@ -69,6 +72,10 @@ function createAdapter(cap: typeof redemptionCap) {
     poolInitialSharedVersion: pool.initialSharedVersion,
     btcDepositRegistryObjectId: btcDepositRegistry.objectId,
     btcDepositRegistryInitialSharedVersion: btcDepositRegistry.initialSharedVersion,
+    utxoSetObjectId: utxoSet.objectId,
+    utxoSetInitialSharedVersion: utxoSet.initialSharedVersion,
+    lightClientObjectId: lightClient.objectId,
+    lightClientInitialSharedVersion: lightClient.initialSharedVersion,
     nullifierRegistryObjectId: nullifierRegistry.objectId,
     nullifierRegistryInitialSharedVersion: nullifierRegistry.initialSharedVersion,
     redemptionQueueObjectId: redemptionQueue.objectId,
@@ -144,6 +151,18 @@ if (redemptionId === undefined) {
   throw new Error(`RedemptionRequested event missing from ${requestResult.digest}`);
 }
 
+console.log("Submitting Sui redemption UTXO selection...");
+const markProcessingTx = await adapter.buildMarkProcessingTransaction({
+  redemptionId: BigInt(redemptionId),
+  selectedUtxos: [{
+    txid: reverseHexToBytes(deposit.depositTxid),
+    vout: deposit.depositVout,
+  }],
+  estimatedMinerFeeSats: minerFee,
+});
+const markProcessingResult = await executeTransactionKind(markProcessingTx.bytes);
+assertSuiSuccess("mark redemption processing", markProcessingResult);
+
 let approveResult: Awaited<ReturnType<typeof executeTransactionKind>> | null = null;
 let ikaSigningResult: Awaited<ReturnType<typeof submitNativeIkaSigning>> | null = null;
 if (withdrawalSignerMode === "ika") {
@@ -164,9 +183,16 @@ console.log("Submitting Sui redemption completion...");
 const freshRedemptionCap = await refreshObjectRef(redemptionCap.objectId);
 state.redemptionCap = freshRedemptionCap;
 adapter = createAdapter(freshRedemptionCap);
+const withdrawalProof = await fetchMerkleProof(withdrawal.withdrawTxid, ESPLORA_URL);
+const withdrawalBlockHash = btc(`getblockhash ${withdrawalProof.block_height}`);
 const completeTx = await adapter.buildCompleteRedemptionTransaction({
   redemptionId: BigInt(redemptionId),
   btcTxid: reverseHexToBytes(withdrawal.withdrawTxid),
+  blockHash: reverseHexToBytes(withdrawalBlockHash),
+  txIndex: withdrawalProof.pos,
+  merkleSiblings: withdrawalProof.merkle.map(reverseHexToBytes),
+  pathBits: BigInt(withdrawalProof.pos),
+  rawTx: hexToBytes(withdrawal.rawTxHex),
 });
 const completeResult = await executeTransactionKind(completeTx.bytes);
 assertSuiSuccess("complete redemption", completeResult);
@@ -180,6 +206,7 @@ assertSuiSuccess("complete redemption", completeResult);
   withdrawalSignerMode,
   redemptionId: String(redemptionId),
   requestTxDigest: requestResult.digest,
+  markProcessingTxDigest: markProcessingResult.digest,
   ...(approveResult ? { ikaApprovalTxDigest: approveResult.digest } : {}),
   ...(ikaSigningResult ? { ikaSigning: ikaSigningResult } : {}),
   completeTxDigest: completeResult.digest,
@@ -204,6 +231,8 @@ console.log(JSON.stringify({
     redemptionId: String(redemptionId),
     requestTxDigest: requestResult.digest,
     requestStatus: requestResult.effects?.status,
+    markProcessingTxDigest: markProcessingResult.digest,
+    markProcessingStatus: markProcessingResult.effects?.status,
     withdrawalSignerMode,
     ...(approveResult ? {
       ikaApprovalTxDigest: approveResult.digest,

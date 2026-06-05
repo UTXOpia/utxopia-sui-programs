@@ -251,6 +251,19 @@ module utxopia::bitcoin {
         (false, TxOutput { value: 0, script_pubkey: vector[] }, 0)
     }
 
+    public(package) fun sum_outputs(raw_tx: &vector<u8>): u64 {
+        let outs = parse_outputs(raw_tx);
+        let mut total = 0u64;
+        let mut i = 0;
+        let n = vector::length(&outs);
+        while (i < n) {
+            let o = vector::borrow(&outs, i);
+            total = total + o.value;
+            i = i + 1;
+        };
+        total
+    }
+
     /// True iff some input spends exactly `(txid, vout)` — the hardened deposit→sweep
     /// linkage (binds the specific funding outpoint, not just "some input touches txid").
     public(package) fun has_input_with_prev_outpoint(

@@ -36,5 +36,5 @@ console.log(JSON.stringify({
   latestEncryptionKey,
   ownedDWalletCaps: caps.dWalletCaps,
   hasNextPage: caps.hasNextPage,
-  note: "Updated sui-poc-state.json with Ika Sui package/object config and latest networkEncryptionKeyId.",
+  note: "Updated utxopia-sui-state.json with Ika Sui package/object config and latest networkEncryptionKeyId.",
 }, null, 2));

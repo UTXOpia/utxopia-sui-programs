@@ -44,11 +44,11 @@ state.verifyingKeyRegistry = sharedRefFromChange(findCreatedObject(vkCh, "::veri
 // Pin all five canonical companion objects to the pool (AdminCap-gated, set once):
 // commitment tree, nullifier registry, BTC deposit registry, UTXO set, and
 // verifying-key registry — so transact/complete_deposit reject any substitute.
-call("pool", "set_commitment_tree_id", [state.adminCap!.objectId, state.pool!.objectId, state.commitmentTree!.objectId]);
-call("pool", "set_nullifier_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.nullifierRegistry!.objectId]);
-call("pool", "set_btc_deposit_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.btcDepositRegistry!.objectId]);
-call("pool", "set_utxo_set_id", [state.adminCap!.objectId, state.pool!.objectId, state.utxoSet!.objectId]);
-call("pool", "set_vk_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.verifyingKeyRegistry!.objectId]);
+callWithAdminCap("pool", "set_commitment_tree_id", [state.adminCap!.objectId, state.pool!.objectId, state.commitmentTree!.objectId]);
+callWithAdminCap("pool", "set_nullifier_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.nullifierRegistry!.objectId]);
+callWithAdminCap("pool", "set_btc_deposit_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.btcDepositRegistry!.objectId]);
+callWithAdminCap("pool", "set_utxo_set_id", [state.adminCap!.objectId, state.pool!.objectId, state.utxoSet!.objectId]);
+callWithAdminCap("pool", "set_vk_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.verifyingKeyRegistry!.objectId]);
 
 // NOTE: btc_light_client::initialize is a separate, network-specific bootstrap (it anchors
 // a trusted checkpoint header + chainwork) driven by the header relayer — analogous to the
@@ -67,6 +67,14 @@ console.log(JSON.stringify({
   redemptionCap: state.redemptionCap,
   verifyingKeyRegistry: state.verifyingKeyRegistry,
 }, null, 2));
+
+function callWithAdminCap(module: string, fn: string, args: string[]) {
+  const changes = call(module, fn, args);
+  const adminChange = changes.find((change: any) =>
+    change.objectId === state.adminCap?.objectId && (change.type === "mutated" || change.type === "created")
+  );
+  state.adminCap = objectRefFromChange(adminChange) ?? state.adminCap;
+}
 
 function call(module: string, fn: string, args: string[]): any[] {
   const result = spawnSync("sui", [

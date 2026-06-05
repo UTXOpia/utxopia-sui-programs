@@ -12,7 +12,7 @@ export interface SuiSharedObjectRef {
   initialSharedVersion: string;
 }
 
-export interface SuiPocState {
+export interface UtxopiaSuiState {
   network: string;
   rpcUrl?: string;
   gasBudget?: string;
@@ -92,22 +92,26 @@ export interface SuiPocState {
 
 // Repo root (post-flatten: scripts/ sits directly under the repo root).
 export const ROOT = path.resolve(import.meta.dir, "..");
-export const DEFAULT_STATE_FILE = path.join(ROOT, "sui-poc-state.json");
+export const DEFAULT_STATE_FILE = path.join(ROOT, "utxopia-sui-state.json");
+export const LEGACY_STATE_FILE = path.join(ROOT, "sui-poc-state.json");
 
 export function stateFile(): string {
-  return process.env.UTXOPIA_SUI_STATE_FILE ?? DEFAULT_STATE_FILE;
+  if (process.env.UTXOPIA_SUI_STATE_FILE) {
+    return process.env.UTXOPIA_SUI_STATE_FILE;
+  }
+  return existsSync(DEFAULT_STATE_FILE) ? DEFAULT_STATE_FILE : LEGACY_STATE_FILE;
 }
 
-export function readState(): SuiPocState {
+export function readState(): UtxopiaSuiState {
   const file = stateFile();
   if (!existsSync(file)) {
     return { network: process.env.UTXOPIA_SUI_NETWORK ?? "testnet" };
   }
 
-  return JSON.parse(readFileSync(file, "utf8")) as SuiPocState;
+  return JSON.parse(readFileSync(file, "utf8")) as UtxopiaSuiState;
 }
 
-export function writeState(state: SuiPocState) {
+export function writeState(state: UtxopiaSuiState) {
   writeFileSync(stateFile(), `${JSON.stringify(state, null, 2)}\n`);
 }
 

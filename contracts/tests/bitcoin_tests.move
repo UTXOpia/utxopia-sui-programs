@@ -28,32 +28,36 @@ module utxopia::bitcoin_tests {
 
     #[test]
     fun u_op_return_direct_push() {
-        let mut script = vector[0x6au8, 0x40u8];
+        let mut script = vector[0x6au8, 0x49u8, 0x63u8];
+        vector::append(&mut script, bytes(8, 0xCC));
         vector::append(&mut script, bytes(32, 0xAA));
         vector::append(&mut script, bytes(32, 0xBB));
-        let (ok, eph, npk) = btc::parse_deposit_op_return(&script);
+        let (ok, tag, eph, npk) = btc::parse_deposit_op_return(&script);
         assert!(ok, 0);
-        assert!(eph == bytes(32, 0xAA), 1);
-        assert!(npk == bytes(32, 0xBB), 2);
+        assert!(tag == bytes(8, 0xCC), 1);
+        assert!(eph == bytes(32, 0xAA), 2);
+        assert!(npk == bytes(32, 0xBB), 3);
     }
 
     #[test]
     fun u_op_return_pushdata1() {
-        let mut script = vector[0x6au8, 0x4cu8, 0x40u8];
+        let mut script = vector[0x6au8, 0x4cu8, 0x49u8, 0x63u8];
+        vector::append(&mut script, bytes(8, 0xCC));
         vector::append(&mut script, bytes(32, 0xCC));
         vector::append(&mut script, bytes(32, 0xDD));
-        let (ok, eph, npk) = btc::parse_deposit_op_return(&script);
+        let (ok, tag, eph, npk) = btc::parse_deposit_op_return(&script);
         assert!(ok, 0);
-        assert!(eph == bytes(32, 0xCC), 1);
-        assert!(npk == bytes(32, 0xDD), 2);
+        assert!(tag == bytes(8, 0xCC), 1);
+        assert!(eph == bytes(32, 0xCC), 2);
+        assert!(npk == bytes(32, 0xDD), 3);
     }
 
     #[test]
     fun u_op_return_wrong_size() {
-        // 32-byte commitment OP_RETURN must NOT match the 64-byte deposit layout
+        // 32-byte commitment OP_RETURN must NOT match the compact deposit layout
         let mut script = vector[0x6au8, 0x20u8];
         vector::append(&mut script, bytes(32, 0xEE));
-        let (ok, _eph, _npk) = btc::parse_deposit_op_return(&script);
+        let (ok, _tag, _eph, _npk) = btc::parse_deposit_op_return(&script);
         assert!(!ok, 0);
     }
 
@@ -69,7 +73,7 @@ module utxopia::bitcoin_tests {
         assert!(vout == 0, 1);
         assert!(btc::output_value(&out) == 50_000, 2);
 
-        let (ok2, eph, npk) = btc::find_deposit_op_return(&tx);
+        let (ok2, _tag, eph, npk) = btc::find_deposit_op_return(&tx);
         assert!(ok2, 3);
         assert!(eph == bytes(32, 0xAA), 4);
         assert!(npk == bytes(32, 0xBB), 5);
@@ -140,7 +144,8 @@ module utxopia::bitcoin_tests {
     }
 
     fun op_return(eph_fill: u8, npk_fill: u8): vector<u8> {
-        let mut s = vector[0x6au8, 0x40u8];
+        let mut s = vector[0x6au8, 0x49u8, 0x63u8];
+        vector::append(&mut s, bytes(8, 0xCC));
         vector::append(&mut s, bytes(32, eph_fill));
         vector::append(&mut s, bytes(32, npk_fill));
         s

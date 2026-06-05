@@ -1,7 +1,7 @@
 /// Bitcoin transaction parser (Move port of `utils/bitcoin.rs`).
 ///
 /// Pure, stateless helpers shared by the SPV/deposit path: varint + LE readers, output
-/// and input iteration, deposit OP_RETURN extraction (`ephemeral_pub || npk`, 64 bytes),
+/// and input iteration, deposit OP_RETURN extraction (v1 header + pool tag + note fields),
 /// credited-output selection, and prev-outpoint linkage. SHA256/Merkle live in the light
 /// client (module 01); Poseidon lives in the commitment tree (module 03). This module does
 /// no hashing and no field math — only structural parsing of raw legacy-serialized txs.
@@ -10,7 +10,10 @@ module utxopia::bitcoin {
     use utxopia::errors;
 
     const OP_RETURN: u8 = 0x6a;
-    const DEPOSIT_OP_RETURN_SIZE: u64 = 64; // ephemeral(32) + npk(32)
+    const DEPOSIT_OP_RETURN_SIZE: u64 = 73; // header(1) + pool_tag(8) + ephemeral(32) + npk(32)
+    const DEPOSIT_HEADER_SUI_MAINNET: u8 = 0x60;
+    const DEPOSIT_HEADER_SUI_TESTNET4: u8 = 0x62;
+    const DEPOSIT_HEADER_SUI_REGTEST: u8 = 0x63;
     const MAX_INPUTS: u64 = 8_000;
     const MAX_OUTPUTS: u64 = 8_000;
     const MAX_TX_BYTES: u64 = 400_000;
@@ -175,41 +178,49 @@ module utxopia::bitcoin {
     // Deposit-specific selectors (port of bitcoin.rs find_* helpers)
     // ---------------------------------------------------------------------
 
-    /// Parse one scriptPubKey for the 64-byte deposit OP_RETURN. Accepts direct-push
-    /// (0x6a 0x40 ‖ 64) and PUSHDATA1 (0x6a 0x4c 0x40 ‖ 64). Returns (ok, ephemeral, npk).
-    public(package) fun parse_deposit_op_return(script: &vector<u8>): (bool, vector<u8>, vector<u8>) {
+    /// Parse one scriptPubKey for the 73-byte v1 Sui deposit OP_RETURN. Accepts
+    /// direct-push (0x6a 0x49 ‖ 73) and PUSHDATA1 (0x6a 0x4c 0x49 ‖ 73).
+    /// Returns (ok, pool_tag, ephemeral, npk).
+    public(package) fun parse_deposit_op_return(script: &vector<u8>): (bool, vector<u8>, vector<u8>, vector<u8>) {
         let n = vector::length(script);
         let payload = if (
             n == 2 + DEPOSIT_OP_RETURN_SIZE
                 && *vector::borrow(script, 0) == OP_RETURN
-                && *vector::borrow(script, 1) == 0x40
+                && *vector::borrow(script, 1) == 0x49
         ) {
             slice(script, 2, DEPOSIT_OP_RETURN_SIZE)
         } else if (
             n == 3 + DEPOSIT_OP_RETURN_SIZE
                 && *vector::borrow(script, 0) == OP_RETURN
                 && *vector::borrow(script, 1) == 0x4c
-                && *vector::borrow(script, 2) == 0x40
+                && *vector::borrow(script, 2) == 0x49
         ) {
             slice(script, 3, DEPOSIT_OP_RETURN_SIZE)
         } else {
-            return (false, vector[], vector[])
+            return (false, vector[], vector[], vector[])
         };
-        (true, slice(&payload, 0, 32), slice(&payload, 32, 32))
+        let header = *vector::borrow(&payload, 0);
+        let ok_header = header == DEPOSIT_HEADER_SUI_MAINNET
+            || header == DEPOSIT_HEADER_SUI_TESTNET4
+            || header == DEPOSIT_HEADER_SUI_REGTEST;
+        if (!ok_header) {
+            return (false, vector[], vector[], vector[])
+        };
+        (true, slice(&payload, 1, 8), slice(&payload, 9, 32), slice(&payload, 41, 32))
     }
 
-    /// First output carrying a valid 64-byte deposit OP_RETURN. (ok, ephemeral, npk).
-    public(package) fun find_deposit_op_return(raw_tx: &vector<u8>): (bool, vector<u8>, vector<u8>) {
+    /// First output carrying a valid 73-byte deposit OP_RETURN. (ok, pool_tag, ephemeral, npk).
+    public(package) fun find_deposit_op_return(raw_tx: &vector<u8>): (bool, vector<u8>, vector<u8>, vector<u8>) {
         let outs = parse_outputs(raw_tx);
         let mut i = 0;
         let n = vector::length(&outs);
         while (i < n) {
             let o = vector::borrow(&outs, i);
-            let (ok, eph, npk) = parse_deposit_op_return(&o.script_pubkey);
-            if (ok) { return (true, eph, npk) };
+            let (ok, tag, eph, npk) = parse_deposit_op_return(&o.script_pubkey);
+            if (ok) { return (true, tag, eph, npk) };
             i = i + 1;
         };
-        (false, vector[], vector[])
+        (false, vector[], vector[], vector[])
     }
 
     fun is_op_return_script(script: &vector<u8>): bool {

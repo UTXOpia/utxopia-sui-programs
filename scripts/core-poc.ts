@@ -60,7 +60,7 @@ async function verifyBitcoinDepositEvidence(): Promise<string> {
     vin: [],
     vout: [
       {
-        scriptpubkey: `6a40${"11".repeat(32)}${"22".repeat(32)}`,
+        scriptpubkey: `6a49${"63"}${"aa".repeat(8)}${"11".repeat(32)}${"22".repeat(32)}`,
         scriptpubkey_asm: "OP_RETURN",
         scriptpubkey_type: "op_return",
         value: 0,
@@ -76,7 +76,7 @@ async function verifyBitcoinDepositEvidence(): Promise<string> {
   if (!opReturn) {
     throw new Error("missing UTXOpia deposit OP_RETURN");
   }
-  return `ephemeral=${opReturn.ephemeralPubkey.length} npk=${opReturn.npk.length}`;
+  return `poolTag=${opReturn.poolTag.length} ephemeral=${opReturn.ephemeralPubkey.length} npk=${opReturn.npk.length}`;
 }
 
 async function verifySuiVkeyExport(): Promise<string> {

@@ -13,6 +13,8 @@ module utxopia::btc_deposit {
     use sui::tx_context::TxContext;
     use sui::table::{Self, Table};
     use sui::poseidon;
+    use std::bcs;
+    use std::hash;
     use utxopia::btc_light_client::{Self, VerifiedInclusion};
     use utxopia::bitcoin;
     use utxopia::commitment_tree::{Self, CommitmentTree};
@@ -98,9 +100,10 @@ module utxopia::btc_deposit {
             (bitcoin::double_sha256(&deposit_raw_tx), deposit_raw_tx)
         };
 
-        // OP_RETURN (ephemeral_pub, npk) from the deposit tx.
-        let (has_op_return, ephemeral_pub, npk) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
+        // OP_RETURN (pool_tag, ephemeral_pub, npk) from the deposit tx.
+        let (has_op_return, pool_tag, ephemeral_pub, npk) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
         assert!(has_op_return, errors::invalid_stealth_op_return());
+        assert!(pool_tag == expected_pool_tag(pool, tree), errors::invalid_stealth_op_return());
 
         // Credited output from the SWEEP tx (the SPV-proven tx paying the pool).
         let pool_script = pool::btc_pool_script(pool);
@@ -274,5 +277,12 @@ module utxopia::btc_deposit {
         vector::push_back(&mut key, (((vout >> 16) & 0xff) as u8));
         vector::push_back(&mut key, (((vout >> 24) & 0xff) as u8));
         key
+    }
+
+    fun expected_pool_tag(pool: &Pool, tree: &CommitmentTree): vector<u8> {
+        let mut data = b"UTXOPIA_SUI";
+        vector::append(&mut data, bcs::to_bytes(&pool::pool_id(pool)));
+        vector::append(&mut data, bcs::to_bytes(&commitment_tree::id(tree)));
+        bitcoin::slice(&hash::sha2_256(data), 0, 8)
     }
 }

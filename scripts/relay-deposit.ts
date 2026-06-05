@@ -56,7 +56,7 @@ assertTxidMatches(deposit.legacyRawTx, args.txid);
 await ensureLightClient(block);
 const lightClient = requireState(state.lightClient, "lightClient");
 
-const npk = bytesToBigintBE(args.opReturn.slice(32, 64));
+const npk = bytesToBigintBE(args.opReturn.slice(41, 73));
 const commitment = computeJoinSplitCommitmentSync(npk, ZKBTC_TOKEN_ID, args.amountSats);
 const tree = await rebuildTree();
 tree.addCommitment(commitment, args.amountSats);
@@ -370,8 +370,8 @@ function parseArgs(argv: string[]): RelayArgs {
     throw new Error("--amount-sats must be a positive integer");
   }
   const opReturnHex = map.get("op-return") ?? "";
-  if (!/^[0-9a-fA-F]{128}$/.test(opReturnHex)) {
-    throw new Error("--op-return must be exactly 64 bytes of hex");
+  if (!/^[0-9a-fA-F]{146}$/.test(opReturnHex)) {
+    throw new Error("--op-return must be exactly 73 bytes of hex");
   }
   const depositVoutText = map.get("deposit-vout");
   const depositVout = depositVoutText == null ? undefined : Number(depositVoutText);

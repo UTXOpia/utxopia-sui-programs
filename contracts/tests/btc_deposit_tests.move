@@ -3,6 +3,8 @@ module utxopia::btc_deposit_tests {
     use sui::test_scenario;
     use sui::clock;
     use sui::object;
+    use std::bcs;
+    use std::hash;
     use utxopia::btc_light_client::{Self as lc, LightClient};
     use utxopia::btc_deposit::{Self, BtcDepositRegistry, UtxoSet};
     use utxopia::commitment_tree::{Self, CommitmentTree};
@@ -55,7 +57,7 @@ module utxopia::btc_deposit_tests {
         bind(&scenario, &mut pool, &tree, &registry, &utxo_set, &light);
 
         // deposit/sweep tx: credited P2TR (vout 0, 50_000) + deposit OP_RETURN (vout 1)
-        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(&pool, &tree, 0x02, 0x01));
         let sweep_txid = lc::test_double_sha256(sweep_tx);
 
         // single-tx block whose merkle root IS the sweep txid
@@ -122,7 +124,7 @@ module utxopia::btc_deposit_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         bind(&scenario, &mut pool, &tree, &registry, &utxo_set, &light);
 
-        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(&pool, &tree, 0x02, 0x01));
         let sweep_txid = lc::test_double_sha256(sweep_tx);
         let g = lc::tip_hash(&light);
         let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
@@ -161,7 +163,7 @@ module utxopia::btc_deposit_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         // (no bind() call on purpose)
 
-        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(0x02, 0x01));
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x22), op_return(&pool, &tree, 0x02, 0x01));
         let sweep_txid = lc::test_double_sha256(sweep_tx);
         let g = lc::tip_hash(&light);
         let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
@@ -194,7 +196,7 @@ module utxopia::btc_deposit_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         bind(&scenario, &mut pool, &tree, &registry, &utxo_set, &light);
 
-        let sweep_tx = build_deposit_tx(50_000, p2tr(0x33), op_return(0x02, 0x01));
+        let sweep_tx = build_deposit_tx(50_000, p2tr(0x33), op_return(&pool, &tree, 0x02, 0x01));
         let sweep_txid = lc::test_double_sha256(sweep_tx);
         let g = lc::tip_hash(&light);
         let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
@@ -268,10 +270,28 @@ module utxopia::btc_deposit_tests {
         s
     }
 
-    fun op_return(eph_fill: u8, npk_fill: u8): vector<u8> {
-        let mut s = vector[0x6au8, 0x40u8];
+    fun op_return(pool: &Pool, tree: &CommitmentTree, eph_fill: u8, npk_fill: u8): vector<u8> {
+        let mut s = vector[0x6au8, 0x49u8, 0x63u8];
+        vector::append(&mut s, expected_pool_tag(pool, tree));
         vector::append(&mut s, bytes(32, eph_fill));
         vector::append(&mut s, bytes(32, npk_fill));
         s
+    }
+
+    fun expected_pool_tag(pool: &Pool, tree: &CommitmentTree): vector<u8> {
+        let mut data = b"UTXOPIA_SUI";
+        vector::append(&mut data, bcs::to_bytes(&pool::pool_id(pool)));
+        vector::append(&mut data, bcs::to_bytes(&commitment_tree::id(tree)));
+        btc_slice(&hash::sha2_256(data), 0, 8)
+    }
+
+    fun btc_slice(data: &vector<u8>, start: u64, len: u64): vector<u8> {
+        let mut out = vector[];
+        let mut i = 0u64;
+        while (i < len) {
+            vector::push_back(&mut out, *vector::borrow(data, start + i));
+            i = i + 1;
+        };
+        out
     }
 }

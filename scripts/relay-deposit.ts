@@ -1,17 +1,27 @@
 #!/usr/bin/env bun
-import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
+import { createHash } from "node:crypto";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { Transaction } from "@mysten/sui/transactions";
 import {
   CommitmentTreeIndex,
   computeJoinSplitCommitmentSync,
   initPoseidon,
 } from "@utxopia/sdk";
-import { bitcoinCli, waitForEsplora, waitForTxIndexed } from "./lib/regtest-helpers";
-import { readState, requireState, writeState } from "./shared";
-import { executeTransactionKind } from "./signing";
+import { bitcoinCli, stripWitnessData, waitForEsplora, waitForTxIndexed } from "./lib/regtest-helpers";
+import {
+  findCreatedObject,
+  objectRefFromChange,
+  readState,
+  requireState,
+  sharedRefFromChange,
+  writeState,
+} from "./shared";
+import { executeBuiltTransaction } from "./signing";
 
 const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
 const ZKBTC_TOKEN_ID = 0x7a627463n;
+const REGTEST_NETWORK = 2;
+const MAX_HEADER_BATCH = 10;
 
 interface RelayArgs {
   txid: string;
@@ -29,54 +39,55 @@ await waitForTxIndexed(args.txid, ESPLORA_URL, 60_000);
 const state = readState();
 const packageId = requireState(state.packageId, "packageId");
 const pool = requireState(state.pool, "pool");
-const verifiedDeposit = requireState(state.lastVerifiedBtcDeposit, "lastVerifiedBtcDeposit");
+const adminCap = requireState(state.adminCap, "adminCap");
+const commitmentTree = requireState(state.commitmentTree, "commitmentTree");
 const btcDepositRegistry = requireState(state.btcDepositRegistry, "btcDepositRegistry");
-const redemptionQueue = requireState(state.redemptionQueue, "redemptionQueue");
-const redemptionCap = requireState(state.redemptionCap, "redemptionCap");
-const verifyingKeyRegistry = requireState(state.verifyingKeyRegistry, "verifyingKeyRegistry");
-const nullifierRegistry = requireState(state.nullifierRegistry, "nullifierRegistry");
 const rpcUrl = process.env.UTXOPIA_SUI_RPC_URL ?? state.rpcUrl ?? "https://fullnode.testnet.sui.io:443";
+const client = new SuiJsonRpcClient({ url: rpcUrl, network: "testnet" });
 
 const depositVout = args.depositVout ?? findDepositVout(args);
+const deposit = readDepositTransaction(args.txid);
+const block = readBlock(deposit.blockhash);
+const txIndex = findTxIndex(block, args.txid);
+const proof = buildMerkleProof(block.txids, txIndex);
+assertMerkleRoot(proof.root, block.merkleRoot);
+assertTxidMatches(deposit.legacyRawTx, args.txid);
+
+await ensureLightClient(block);
+const lightClient = requireState(state.lightClient, "lightClient");
+
 const npk = bytesToBigintBE(args.opReturn.slice(32, 64));
 const commitment = computeJoinSplitCommitmentSync(npk, ZKBTC_TOKEN_ID, args.amountSats);
 const tree = await rebuildTree();
 tree.addCommitment(commitment, args.amountSats);
 const offchainPoseidonRoot = tree.getRoot();
-await assertVerifiedDepositMatches({
-  objectId: verifiedDeposit.objectId,
-  depositTxid: reverseHexToBytes(args.txid),
-  depositVout,
-  amountSats: args.amountSats,
-  opReturnPayload: args.opReturn,
-  commitment: fieldToSuiBytes(commitment),
-  verifiedRoot: fieldToSuiBytes(offchainPoseidonRoot),
-});
 
-const adapter = new UTXOpiaSuiAdapter({
-  rpcUrl,
-  packageId,
-  poolObjectId: pool.objectId,
-  poolInitialSharedVersion: pool.initialSharedVersion,
-  btcDepositRegistryObjectId: btcDepositRegistry.objectId,
-  btcDepositRegistryInitialSharedVersion: btcDepositRegistry.initialSharedVersion,
-  verifyingKeyRegistryObjectId: verifyingKeyRegistry.objectId,
-  verifyingKeyRegistryInitialSharedVersion: verifyingKeyRegistry.initialSharedVersion,
-  nullifierRegistryObjectId: nullifierRegistry.objectId,
-  nullifierRegistryInitialSharedVersion: nullifierRegistry.initialSharedVersion,
-  redemptionQueueObjectId: redemptionQueue.objectId,
-  redemptionQueueInitialSharedVersion: redemptionQueue.initialSharedVersion,
-  redemptionCapObjectId: redemptionCap.objectId,
-  redemptionCapVersion: redemptionCap.version,
-  redemptionCapDigest: redemptionCap.digest,
+const relayTx = new Transaction();
+const inclusion = relayTx.moveCall({
+  target: `${packageId}::btc_light_client::verify_tx_inclusion`,
+  arguments: [
+    shared(relayTx, lightClient, false),
+    relayTx.pure.vector("u8", reverseHexToBytes(block.hash)),
+    relayTx.pure.vector("u8", reverseHexToBytes(args.txid)),
+    relayTx.pure.u32(txIndex),
+    relayTx.pure("vector<vector<u8>>", proof.siblings.map((bytes) => Array.from(bytes))),
+    relayTx.pure.u64(proof.pathBits.toString()),
+  ],
 });
-
-const tx = await adapter.buildBtcDepositTransaction({
-  verifiedDepositObjectId: verifiedDeposit.objectId,
-  verifiedDepositVersion: verifiedDeposit.version,
-  verifiedDepositDigest: verifiedDeposit.digest,
+relayTx.moveCall({
+  target: `${packageId}::btc_deposit::complete_deposit`,
+  arguments: [
+    shared(relayTx, pool, true),
+    shared(relayTx, btcDepositRegistry, true),
+    shared(relayTx, requireState(state.utxoSet, "utxoSet"), true),
+    shared(relayTx, commitmentTree, true),
+    inclusion,
+    relayTx.pure.vector("u8", deposit.legacyRawTx),
+    relayTx.pure.vector("u8", new Uint8Array()),
+    relayTx.pure.bool(true),
+  ],
 });
-const result = await executeTransactionKind(tx.bytes);
+const result = await executeBuiltTransaction(relayTx);
 assertSuiSuccess("Sui BTC deposit relay", result);
 
 const relayCommitments = ((state as any).suiDepositRelayCommitments ?? []) as Array<{
@@ -95,6 +106,9 @@ relayCommitments.push({
   opReturn: toHex(args.opReturn),
   commitment: toHex(fieldToSuiBytes(commitment)),
   offchainPoseidonRoot: toHex(fieldToSuiBytes(offchainPoseidonRoot)),
+  blockHash: block.hash,
+  txIndex,
+  pathBits: proof.pathBits.toString(),
   txDigest: result.digest,
 };
 writeState(state);
@@ -108,6 +122,231 @@ console.log(JSON.stringify({
   commitment: toHex(fieldToSuiBytes(commitment)),
   offchainPoseidonRoot: toHex(fieldToSuiBytes(offchainPoseidonRoot)),
 }, null, 2));
+
+interface DepositTransaction {
+  txid: string;
+  blockhash: string;
+  decoded: any;
+  legacyRawTx: Uint8Array;
+}
+
+interface BlockContext {
+  hash: string;
+  height: number;
+  previousblockhash: string;
+  merkleroot: string;
+  merkleRoot: Uint8Array;
+  txids: string[];
+  rawHeader: Uint8Array;
+}
+
+function readDepositTransaction(txid: string): DepositTransaction {
+  const walletTx = JSON.parse(bitcoinCli(`gettransaction ${txid} true true`));
+  if (!walletTx.blockhash) {
+    throw new Error(`BTC transaction ${txid} is not confirmed`);
+  }
+  if (!walletTx.hex || !walletTx.decoded) {
+    throw new Error(`BTC transaction ${txid} is missing hex/decoded data`);
+  }
+  return {
+    txid,
+    blockhash: walletTx.blockhash,
+    decoded: walletTx.decoded,
+    legacyRawTx: Uint8Array.from(stripWitnessData(Buffer.from(walletTx.hex, "hex"))),
+  };
+}
+
+function readBlock(hash: string): BlockContext {
+  const block = JSON.parse(bitcoinCli(`getblock ${hash} 2`));
+  const rawHeader = Uint8Array.from(Buffer.from(bitcoinCli(`getblockheader ${hash} false`), "hex"));
+  const txids = (block.tx ?? []).map((tx: any) => String(tx.txid));
+  if (!Number.isInteger(block.height) || !block.previousblockhash || txids.length === 0) {
+    throw new Error(`Unexpected Bitcoin block response for ${hash}`);
+  }
+  return {
+    hash: block.hash,
+    height: Number(block.height),
+    previousblockhash: block.previousblockhash,
+    merkleroot: block.merkleroot,
+    merkleRoot: reverseHexToBytes(block.merkleroot),
+    txids,
+    rawHeader,
+  };
+}
+
+function findTxIndex(block: BlockContext, txid: string): number {
+  const index = block.txids.findIndex((candidate) => candidate === txid);
+  if (index < 0) {
+    throw new Error(`BTC transaction ${txid} was not found in block ${block.hash}`);
+  }
+  return index;
+}
+
+function buildMerkleProof(txids: string[], txIndex: number): {
+  siblings: Uint8Array[];
+  pathBits: bigint;
+  root: Uint8Array;
+} {
+  let level = txids.map(reverseHexToBytes);
+  let index = txIndex;
+  let pathBits = 0n;
+  const siblings: Uint8Array[] = [];
+
+  while (level.length > 1) {
+    const siblingIndex = index % 2 === 0
+      ? Math.min(index + 1, level.length - 1)
+      : index - 1;
+    siblings.push(level[siblingIndex]);
+    if (index % 2 === 1) {
+      pathBits |= 1n << BigInt(siblings.length - 1);
+    }
+
+    const next: Uint8Array[] = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] ?? left;
+      next.push(hash256(concatBytes(left, right)));
+    }
+    level = next;
+    index = Math.floor(index / 2);
+  }
+
+  return { siblings, pathBits, root: level[0] };
+}
+
+function assertMerkleRoot(actual: Uint8Array, expected: Uint8Array) {
+  if (toHex(actual) !== toHex(expected)) {
+    throw new Error(`Merkle proof root mismatch: got ${toHex(actual)}, expected ${toHex(expected)}`);
+  }
+}
+
+function assertTxidMatches(rawTx: Uint8Array, txid: string) {
+  const actual = toHex(hash256(rawTx));
+  const expected = toHex(reverseHexToBytes(txid));
+  if (actual !== expected) {
+    throw new Error(`Legacy raw tx hash mismatch: got ${actual}, expected ${expected}`);
+  }
+}
+
+async function ensureLightClient(block: BlockContext) {
+  if (!state.lightClient) {
+    const parent = readBlock(block.previousblockhash);
+    const initTx = new Transaction();
+    initTx.moveCall({
+      target: `${packageId}::btc_light_client::initialize`,
+      arguments: [
+        initTx.pure.u8(REGTEST_NETWORK),
+        initTx.pure.vector("u8", parent.rawHeader),
+        initTx.pure.u64(parent.height),
+        initTx.pure.u256(BigInt(`0x${JSON.parse(bitcoinCli(`getblock ${parent.hash} 1`)).chainwork}`)),
+        initTx.pure.u32(Number.parseInt(JSON.parse(bitcoinCli(`getblock ${parent.hash} 1`)).bits, 16)),
+        initTx.pure.u32(Number(JSON.parse(bitcoinCli(`getblock ${parent.hash} 1`)).time)),
+      ],
+    });
+    const result = await executeBuiltTransaction(initTx);
+    assertSuiSuccess("Sui BTC light-client init", result);
+    const changes = result.objectChanges ?? [];
+    state.lightClient = sharedRefFromChange(findCreatedObject(changes, "::btc_light_client::LightClient"));
+    state.lightClientAdminCap = objectRefFromChange(findCreatedObject(changes, "::btc_light_client::LightClientAdminCap"));
+    writeState(state);
+  }
+
+  await submitHeadersThrough(block.height);
+  await bindPoolIfNeeded();
+}
+
+async function submitHeadersThrough(height: number) {
+  const light = requireState(state.lightClient, "lightClient");
+  const object = await client.getObject({ id: light.objectId, options: { showContent: true } });
+  const fields = (object.data?.content as any)?.fields;
+  const tipHeight = Number(fields?.tip_height ?? fields?.tipHeight ?? 0);
+  if (!Number.isInteger(tipHeight)) {
+    throw new Error(`Could not read Sui BTC light-client tip height for ${light.objectId}`);
+  }
+  if (tipHeight >= height) {
+    return;
+  }
+
+  for (let start = tipHeight + 1; start <= height; start += MAX_HEADER_BATCH) {
+    const end = Math.min(height, start + MAX_HEADER_BATCH - 1);
+    const headers: Uint8Array[] = [];
+    for (let h = start; h <= end; h += 1) {
+      const hash = bitcoinCli(`getblockhash ${h}`);
+      headers.push(Uint8Array.from(Buffer.from(bitcoinCli(`getblockheader ${hash} false`), "hex")));
+    }
+
+    const tx = new Transaction();
+    tx.moveCall({
+      target: `${packageId}::btc_light_client::submit_headers`,
+      arguments: [
+        shared(tx, light, true),
+        tx.pure.vector("u8", concatBytes(...headers)),
+        tx.object.clock(),
+      ],
+    });
+    const result = await executeBuiltTransaction(tx);
+    assertSuiSuccess(`Sui BTC header submit ${start}-${end}`, result);
+  }
+}
+
+async function bindPoolIfNeeded() {
+  const object = await client.getObject({ id: pool.objectId, options: { showContent: true } });
+  const fields = (object.data?.content as any)?.fields;
+  const tx = new Transaction();
+  let changed = false;
+
+  if (!fields?.light_client_id) {
+    tx.moveCall({
+      target: `${packageId}::pool::set_light_client_id`,
+      arguments: [
+        tx.object(adminCap.objectId),
+        shared(tx, pool, true),
+        tx.pure.address(requireState(state.lightClient, "lightClient").objectId),
+      ],
+    });
+    changed = true;
+  }
+
+  if (!fields?.btc_pool_script) {
+    tx.moveCall({
+      target: `${packageId}::pool::set_btc_pool_script`,
+      arguments: [
+        tx.object(adminCap.objectId),
+        shared(tx, pool, true),
+        tx.pure.vector("u8", ikaVaultP2trScript()),
+      ],
+    });
+    changed = true;
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  const result = await executeBuiltTransaction(tx);
+  assertSuiSuccess("Sui pool BTC bindings", result);
+  const adminChange = (result.objectChanges ?? []).find((change: any) =>
+    change.objectId === adminCap.objectId && (change.type === "mutated" || change.type === "created")
+  );
+  state.adminCap = objectRefFromChange(adminChange) ?? state.adminCap;
+  writeState(state);
+}
+
+function ikaVaultP2trScript(): Uint8Array {
+  const xonly = state.ikaSui?.dWalletXOnlyPubkey ?? state.ika?.dwalletXOnlyPubkey;
+  if (!xonly || !/^[0-9a-fA-F]{64}$/.test(xonly)) {
+    throw new Error("ika dWallet x-only pubkey missing from Sui state; cannot bind BTC pool script");
+  }
+  return Uint8Array.from(Buffer.concat([Buffer.from([0x51, 0x20]), Buffer.from(xonly, "hex")]));
+}
+
+function shared(tx: Transaction, ref: { objectId: string; initialSharedVersion: string | number }, mutable: boolean) {
+  return tx.sharedObjectRef({
+    objectId: ref.objectId,
+    initialSharedVersion: ref.initialSharedVersion,
+    mutable,
+  });
+}
 
 function parseArgs(argv: string[]): RelayArgs {
   const map = new Map<string, string>();
@@ -340,4 +579,13 @@ function reverseHexToBytes(hex: string): Uint8Array {
 
 function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("hex");
+}
+
+function hash256(bytes: Uint8Array): Uint8Array {
+  const first = createHash("sha256").update(bytes).digest();
+  return Uint8Array.from(createHash("sha256").update(first).digest());
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  return Uint8Array.from(Buffer.concat(parts.map((part) => Buffer.from(part))));
 }

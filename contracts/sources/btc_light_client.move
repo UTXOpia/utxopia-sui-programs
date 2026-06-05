@@ -110,6 +110,7 @@ module utxopia::btc_light_client {
         genesis_epoch_start_time: u32,
         ctx: &mut TxContext,
     ) {
+        assert!(network == NETWORK_MAINNET || network == NETWORK_REGTEST, errors::bad_bits());
         assert!(vector::length(&genesis_raw_header) == HEADER_LEN, errors::bad_header_len());
         let required_confirmations = if (network == NETWORK_MAINNET) { 6 } else { 1 };
         let block_hash = double_sha256(&genesis_raw_header);

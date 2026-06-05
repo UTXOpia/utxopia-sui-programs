@@ -498,4 +498,12 @@ module utxopia::redemption {
     public fun test_redeem_bound_params_hash(btc_scripts: vector<vector<u8>>): vector<u8> {
         compute_redeem_bound_params_hash(&btc_scripts, &vector[])
     }
+
+    #[test_only]
+    public fun test_redeem_bound_params_hash_with_stealth(
+        btc_scripts: vector<vector<u8>>,
+        stealth_data: vector<vector<u8>>,
+    ): vector<u8> {
+        compute_redeem_bound_params_hash(&btc_scripts, &stealth_data)
+    }
 }

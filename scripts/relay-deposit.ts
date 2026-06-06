@@ -51,7 +51,7 @@ const block = readBlock(deposit.blockhash);
 const txIndex = findTxIndex(block, args.txid);
 const proof = buildMerkleProof(block.txids, txIndex);
 assertMerkleRoot(proof.root, block.merkleRoot);
-assertTxidMatches(deposit.legacyRawTx, args.txid);
+assertTxidMatches(deposit.txidRawTx, args.txid);
 
 await ensureLightClient(block);
 const lightClient = requireState(state.lightClient, "lightClient");
@@ -82,7 +82,7 @@ relayTx.moveCall({
     shared(relayTx, requireState(state.utxoSet, "utxoSet"), true),
     shared(relayTx, commitmentTree, true),
     inclusion,
-    relayTx.pure.vector("u8", deposit.legacyRawTx),
+    relayTx.pure.vector("u8", deposit.txidRawTx),
     relayTx.pure.vector("u8", new Uint8Array()),
     relayTx.pure.bool(true),
   ],
@@ -127,7 +127,7 @@ interface DepositTransaction {
   txid: string;
   blockhash: string;
   decoded: any;
-  legacyRawTx: Uint8Array;
+  txidRawTx: Uint8Array;
 }
 
 interface BlockContext {
@@ -152,7 +152,7 @@ function readDepositTransaction(txid: string): DepositTransaction {
     txid,
     blockhash: walletTx.blockhash,
     decoded: walletTx.decoded,
-    legacyRawTx: Uint8Array.from(stripWitnessData(Buffer.from(walletTx.hex, "hex"))),
+    txidRawTx: Uint8Array.from(stripWitnessData(Buffer.from(walletTx.hex, "hex"))),
   };
 }
 
@@ -224,7 +224,7 @@ function assertTxidMatches(rawTx: Uint8Array, txid: string) {
   const actual = toHex(hash256(rawTx));
   const expected = toHex(reverseHexToBytes(txid));
   if (actual !== expected) {
-    throw new Error(`Legacy raw tx hash mismatch: got ${actual}, expected ${expected}`);
+    throw new Error(`Bitcoin txid serialization hash mismatch: got ${actual}, expected ${expected}`);
   }
 }
 

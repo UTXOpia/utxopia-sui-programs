@@ -40,6 +40,8 @@ module utxopia::errors {
     const E_WRONG_CAP: u64 = 39;
     const E_WRONG_OBJECT: u64 = 40;
     const E_ALREADY_BOUND: u64 = 41;
+    const E_NO_PENDING_PROPOSAL: u64 = 42;
+    const E_TIMELOCK_NOT_ELAPSED: u64 = 43;
 
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -82,4 +84,6 @@ module utxopia::errors {
     public fun wrong_cap(): u64 { E_WRONG_CAP }
     public fun wrong_object(): u64 { E_WRONG_OBJECT }
     public fun already_bound(): u64 { E_ALREADY_BOUND }
+    public fun no_pending_proposal(): u64 { E_NO_PENDING_PROPOSAL }
+    public fun timelock_not_elapsed(): u64 { E_TIMELOCK_NOT_ELAPSED }
 }

@@ -2,6 +2,7 @@ module utxopia::pool {
     use sui::object::{Self, ID, UID};
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
+    use sui::clock::{Self, Clock};
     use std::option::{Self, Option};
     use utxopia::errors;
     use utxopia::events;
@@ -10,6 +11,7 @@ module utxopia::pool {
     const ZKBTC_TOKEN_ID: u256 = 0x7a627463; // "zkbtc"
     const DEFAULT_MAX_DEPOSIT_SATS: u64 = 2_100_000_000_000_000; // 21M BTC
     const MAX_BPS: u16 = 10_000;
+    const CONFIG_TIMELOCK_DELAY_MS: u64 = 172_800_000; // 48h, matching Solana TIMELOCK_DELAY_SECS
 
     /// Authority over exactly one Pool (bound by `pool_id`). Minting a cap via `initialize`
     /// only grants authority over the pool it created — never another pool.
@@ -31,6 +33,11 @@ module utxopia::pool {
         max_deposit_sats: u64,
         deposit_fee_bps: u16,
         service_fee_sats: u64,
+        pending_min_deposit_sats: Option<u64>,
+        pending_max_deposit_sats: Option<u64>,
+        pending_deposit_fee_bps: Option<u16>,
+        pending_service_fee_sats: Option<u64>,
+        pending_execute_after_ms: Option<u64>,
         btc_token_id: u256,
         // accounting
         deposit_count: u64,
@@ -58,6 +65,11 @@ module utxopia::pool {
             max_deposit_sats: DEFAULT_MAX_DEPOSIT_SATS,
             deposit_fee_bps: 0,
             service_fee_sats: 0,
+            pending_min_deposit_sats: option::none(),
+            pending_max_deposit_sats: option::none(),
+            pending_deposit_fee_bps: option::none(),
+            pending_service_fee_sats: option::none(),
+            pending_execute_after_ms: option::none(),
             btc_token_id: ZKBTC_TOKEN_ID,
             deposit_count: 0,
             total_shielded: 0,
@@ -87,21 +99,49 @@ module utxopia::pool {
         events::pool_paused(object::uid_to_address(&pool.id), paused);
     }
 
-    public fun set_deposit_config(
+    public fun propose_deposit_config_update(
         cap: &AdminCap,
         pool: &mut Pool,
         min_deposit_sats: u64,
         max_deposit_sats: u64,
         deposit_fee_bps: u16,
         service_fee_sats: u64,
+        clock: &Clock,
     ) {
         assert_admin(cap, pool);
         assert!(deposit_fee_bps <= MAX_BPS, errors::invalid_btc_deposit());
         assert!(min_deposit_sats <= max_deposit_sats, errors::invalid_btc_deposit());
-        pool.min_deposit_sats = min_deposit_sats;
-        pool.max_deposit_sats = max_deposit_sats;
-        pool.deposit_fee_bps = deposit_fee_bps;
-        pool.service_fee_sats = service_fee_sats;
+        let execute_after = clock::timestamp_ms(clock) + CONFIG_TIMELOCK_DELAY_MS;
+        pool.pending_min_deposit_sats = option::some(min_deposit_sats);
+        pool.pending_max_deposit_sats = option::some(max_deposit_sats);
+        pool.pending_deposit_fee_bps = option::some(deposit_fee_bps);
+        pool.pending_service_fee_sats = option::some(service_fee_sats);
+        pool.pending_execute_after_ms = option::some(execute_after);
+    }
+
+    public fun execute_deposit_config_update(pool: &mut Pool, clock: &Clock) {
+        assert!(option::is_some(&pool.pending_execute_after_ms), errors::no_pending_proposal());
+        assert!(clock::timestamp_ms(clock) >= *option::borrow(&pool.pending_execute_after_ms), errors::timelock_not_elapsed());
+
+        pool.min_deposit_sats = *option::borrow(&pool.pending_min_deposit_sats);
+        pool.max_deposit_sats = *option::borrow(&pool.pending_max_deposit_sats);
+        pool.deposit_fee_bps = *option::borrow(&pool.pending_deposit_fee_bps);
+        pool.service_fee_sats = *option::borrow(&pool.pending_service_fee_sats);
+        clear_pending_deposit_config(pool);
+    }
+
+    public fun cancel_deposit_config_update(cap: &AdminCap, pool: &mut Pool) {
+        assert_admin(cap, pool);
+        assert!(option::is_some(&pool.pending_execute_after_ms), errors::no_pending_proposal());
+        clear_pending_deposit_config(pool);
+    }
+
+    fun clear_pending_deposit_config(pool: &mut Pool) {
+        pool.pending_min_deposit_sats = option::none();
+        pool.pending_max_deposit_sats = option::none();
+        pool.pending_deposit_fee_bps = option::none();
+        pool.pending_service_fee_sats = option::none();
+        pool.pending_execute_after_ms = option::none();
     }
 
     // --- canonical companion binding (AdminCap-gated, set once each) ---
@@ -203,6 +243,7 @@ module utxopia::pool {
     public fun max_deposit_sats(pool: &Pool): u64 { pool.max_deposit_sats }
     public fun deposit_fee_bps(pool: &Pool): u16 { pool.deposit_fee_bps }
     public fun service_fee_sats(pool: &Pool): u64 { pool.service_fee_sats }
+    public fun pending_execute_after_ms(pool: &Pool): Option<u64> { pool.pending_execute_after_ms }
     public fun btc_token_id(pool: &Pool): u256 { pool.btc_token_id }
     public fun deposit_count(pool: &Pool): u64 { pool.deposit_count }
     public fun total_shielded(pool: &Pool): u128 { pool.total_shielded }

@@ -12,11 +12,11 @@ import type { NormalizedSuiUtxopiaEvent } from "./types";
  *
  * Note scanning is Mode A (trustless): the indexer serves the raw deposit/transfer
  * commitment rows (ephemeral_pub + amount/encrypted-amount + leaf index); the SDK does the
- * viewing-key/npk match client-side. The viewing key never reaches the indexer.
+ * viewing-key/note-public-key match client-side. The viewing key never reaches the indexer.
  *
  * Expected payload keys are the Move event field names (snake_case) emitted by
  * `events.move`: leaf_index, commitment, root, root_index, nullifier, redemption_id,
- * amount_sats, max_fee_sats, btc_script, ephemeral_pubkey, npk, btc_txid, paused.
+ * amount_sats, max_fee_sats, btc_script, ephemeral_pubkey, note_public_key, btc_txid, paused.
  */
 export interface PoolStateProjection {
   packageId: string;

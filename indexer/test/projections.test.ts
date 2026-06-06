@@ -22,7 +22,17 @@ test("projections derive pool state, deposit notes, nullifiers, redemptions", ()
     ev("PoolCreated", {}),
     ev("CommitmentInserted", { leaf_index: 0, commitment: "0xaa" }, "d1"),
     ev("MerkleRootUpdated", { root: "0xroot1", root_index: 1 }, "d1"),
-    ev("BtcDepositVerified", { leaf_index: 0, commitment: "0xaa", ephemeral_pubkey: "0xeph", amount_sats: "50000" }, "d1"),
+    ev(
+      "BtcDepositVerified",
+      {
+        leaf_index: 0,
+        commitment: "0xaa",
+        ephemeral_pubkey: "0xeph",
+        note_public_key: "0xnote",
+        amount_sats: "50000",
+      },
+      "d1",
+    ),
     ev("NullifierSpent", { nullifier: "0xnf" }, "d2"),
     ev("RedemptionRequested", { redemption_id: 0, amount_sats: "30000", max_fee_sats: "1000", btc_script: "0x5120ab" }, "d3"),
     ev("RedemptionCompleted", { redemption_id: 0, btc_txid: "0xtxid" }, "d4"),

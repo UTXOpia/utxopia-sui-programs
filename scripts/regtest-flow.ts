@@ -199,13 +199,13 @@ async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
   };
 }
 
-function buildSuiDepositOpReturnPayload(ephemeralPub: Uint8Array, npk: Uint8Array): Uint8Array {
+function buildSuiDepositOpReturnPayload(ephemeralPubkey: Uint8Array, notePublicKey: Uint8Array): Uint8Array {
   const tagInput = concatBytes([
     new TextEncoder().encode("UTXOPIA_SUI"),
     suiAddressToBytes(pool.objectId),
     suiAddressToBytes(commitmentTree.objectId),
   ]);
-  return buildDepositOpReturn(ephemeralPub, npk, {
+  return buildDepositOpReturn(ephemeralPubkey, notePublicKey, {
     destinationChain: DEPOSIT_DESTINATION_CHAIN.SUI,
     bitcoinNetwork: DEPOSIT_BITCOIN_NETWORK.REGTEST,
     poolTag: sha256(tagInput).slice(0, 8),

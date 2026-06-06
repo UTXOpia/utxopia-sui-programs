@@ -1,8 +1,8 @@
 /// Trustless BTC deposit completion (Move port of `complete_deposit.rs`).
 ///
 /// Consumes an SPV-proven `VerifiedInclusion` (module 01) + the raw tx bytes, binds the
-/// bytes to the proven txid, extracts the deposit OP_RETURN (npk) and credited output
-/// trustlessly, applies fees, computes `Poseidon(npk, ZKBTC_TOKEN_ID, shielded)` on-chain,
+/// bytes to the proven txid, extracts the deposit OP_RETURN note_public_key and credited output
+/// trustlessly, applies fees, computes `Poseidon(note_public_key, ZKBTC_TOKEN_ID, shielded)` on-chain,
 /// inserts the commitment into the real Poseidon tree (module 03), and dedups on the
 /// immutable deposit outpoint via a Table. There is NO way to mint a commitment without a
 /// valid SPV inclusion proof — the forgeable `new_verified_deposit` stub is gone.
@@ -100,8 +100,8 @@ module utxopia::btc_deposit {
             (bitcoin::double_sha256(&deposit_raw_tx), deposit_raw_tx)
         };
 
-        // OP_RETURN (pool_tag, ephemeral_pub, npk) from the deposit tx.
-        let (has_op_return, pool_tag, ephemeral_pub, npk) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
+        // OP_RETURN (pool_tag, ephemeral_pubkey, note_public_key) from the deposit tx.
+        let (has_op_return, pool_tag, ephemeral_pubkey, note_public_key) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
         assert!(has_op_return, errors::invalid_stealth_op_return());
         assert!(pool_tag == expected_pool_tag(pool, tree), errors::invalid_stealth_op_return());
 
@@ -141,10 +141,10 @@ module utxopia::btc_deposit {
         table::add(&mut registry.claimed, claim_key, true);
         registry.claimed_count = registry.claimed_count + 1;
 
-        // Commitment on-chain: Poseidon(npk, token_id, shielded_amount).
-        let npk_field = commitment_tree::field_from_be_bytes(&npk); // hard-rejects npk >= r
+        // Commitment on-chain: Poseidon(note_public_key, token_id, shielded_amount).
+        let note_public_key_field = commitment_tree::field_from_be_bytes(&note_public_key);
         let commitment_u256 = poseidon::poseidon_bn254(
-            &vector[npk_field, pool::btc_token_id(pool), (shielded_amount as u256)],
+            &vector[note_public_key_field, pool::btc_token_id(pool), (shielded_amount as u256)],
         );
         let commitment_be = commitment_tree::field_to_be_bytes(commitment_u256);
 
@@ -155,15 +155,15 @@ module utxopia::btc_deposit {
         add_pool_utxo(utxo_set, pool_id, sweep_txid, sweep_vout, amount_sats, ctx);
 
         // Stealth announcement (deposit): btc_deposit_verified carries the plaintext amount,
-        // ephemeral_pub, npk, commitment, and leaf index the SDK scanner needs.
+        // ephemeral_pubkey, note_public_key, commitment, and leaf index the SDK scanner needs.
         events::btc_deposit_verified(
             pool_id,
             leaf_index,
             deposit_txid,
             deposit_vout,
             amount_sats,
-            ephemeral_pub,
-            npk,
+            ephemeral_pubkey,
+            note_public_key,
             commitment_be,
         );
 

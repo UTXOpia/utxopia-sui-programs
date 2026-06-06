@@ -38,7 +38,16 @@ const dsha = (arr: number[]) =>
 const makeHeader = (prev: number[], merkle: number[], ts: number, bits: number, nonce: number) =>
   [...le(1, 4), ...prev, ...merkle, ...le(ts, 4), ...le(bits, 4), ...le(nonce, 4)];
 const p2tr = (f: number) => [0x51, 0x20, ...fill(32, f)];
-const opret = (eph: number, npk: number) => [0x6a, 0x40, ...fill(32, eph), ...fill(32, npk)];
+const hexToBytes = (value: string) => Array.from(Buffer.from(value.replace(/^0x/, "").padStart(64, "0"), "hex"));
+const sha256 = (arr: number[]) => Array.from(createHash("sha256").update(Buffer.from(arr)).digest());
+const expectedPoolTag = (pool: string, tree: string) =>
+  sha256([...Buffer.from("UTXOPIA_SUI"), ...hexToBytes(pool), ...hexToBytes(tree)]).slice(0, 8);
+const opret = (pool: string, tree: string, ephemeralPubkey: number, notePublicKey: number) => [
+  0x6a, 0x49, 0x63,
+  ...expectedPoolTag(pool, tree),
+  ...fill(32, ephemeralPubkey),
+  ...fill(32, notePublicKey),
+];
 const buildDepositTx = (v0: number, s0: number[], s1: number[]) => [
   ...le(1, 4), 0x01, ...fill(32, 0x11), ...le(7, 4), 0x00, ...le(0xffffffff, 4),
   0x02, ...le(v0, 8), s0.length, ...s0, ...le(0, 8), s1.length, ...s1, ...le(0, 4),
@@ -75,13 +84,10 @@ async function main() {
     return res;
   };
 
-  // genesis + child block + deposit tx
+  // genesis header; the child block is built after pool/tree IDs exist because
+  // the deposit OP_RETURN binds the destination pool tag.
   const genesis = makeHeader(fill(32, 0), fill(32, 9), 1000, REGTEST_BITS, 0);
   const genesisHash = dsha(genesis);
-  const sweepTx = buildDepositTx(50_000, p2tr(0x22), opret(0x02, 0x01));
-  const sweepTxid = dsha(sweepTx);
-  const block = makeHeader(genesisHash, sweepTxid, 1001, REGTEST_BITS, 1);
-  const blockHash = dsha(block);
 
   // ---- Tx1: initialize all shared objects ----
   const t1 = new Transaction();
@@ -120,6 +126,11 @@ async function main() {
   tb.moveCall({ target: `${PKG}::pool::set_utxo_set_id`, arguments: [tb.object(adminCap), tb.object(pool), tb.pure.id(utxoSet)] });
   await exec(tb, "bind canonical objects");
 
+  const sweepTx = buildDepositTx(50_000, p2tr(0x22), opret(pool, tree, 0x02, 0x01));
+  const sweepTxid = dsha(sweepTx);
+  const block = makeHeader(genesisHash, sweepTxid, 1001, REGTEST_BITS, 1);
+  const blockHash = dsha(block);
+
   const execExpectAbort = async (tx: Transaction, label: string, code: number) => {
     tx.setGasBudget(1_000_000_000);
     const res = await client.signAndExecuteTransaction({ signer: kp, transaction: tx, options: { showEffects: true } });
@@ -152,7 +163,7 @@ async function main() {
     target: `${PKG}::btc_deposit::complete_deposit`,
     arguments: [
       t3.object(pool), t3.object(registry), t3.object(utxoSet), t3.object(tree),
-      inclusion, vecU8(t3, sweepTx), vecU8(t3, []), t3.pure.bool(true), vecU8(t3, []),
+      inclusion, vecU8(t3, sweepTx), vecU8(t3, []), t3.pure.bool(true),
     ],
   });
   const r3 = await exec(t3, "verify_tx_inclusion + complete_deposit");
@@ -179,7 +190,7 @@ async function main() {
   });
   t4.moveCall({
     target: `${PKG}::btc_deposit::complete_deposit`,
-    arguments: [t4.object(pool), t4.object(registry), t4.object(utxoSet), t4.object(tree), inc4, vecU8(t4, sweepTx), vecU8(t4, []), t4.pure.bool(true), vecU8(t4, [])],
+    arguments: [t4.object(pool), t4.object(registry), t4.object(utxoSet), t4.object(tree), inc4, vecU8(t4, sweepTx), vecU8(t4, []), t4.pure.bool(true)],
   });
   await execExpectAbort(t4, "double-claim", 15);
 

@@ -56,8 +56,8 @@ assertTxidMatches(deposit.txidRawTx, args.txid);
 await ensureLightClient(block);
 const lightClient = requireState(state.lightClient, "lightClient");
 
-const npk = bytesToBigintBE(args.opReturn.slice(41, 73));
-const commitment = computeJoinSplitCommitmentSync(npk, ZKBTC_TOKEN_ID, args.amountSats);
+const notePublicKey = bytesToBigintBE(args.opReturn.slice(41, 73));
+const commitment = computeJoinSplitCommitmentSync(notePublicKey, ZKBTC_TOKEN_ID, args.amountSats);
 const tree = await rebuildTree();
 tree.addCommitment(commitment, args.amountSats);
 const offchainPoseidonRoot = tree.getRoot();

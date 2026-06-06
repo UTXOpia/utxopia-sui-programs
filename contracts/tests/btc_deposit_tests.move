@@ -270,11 +270,11 @@ module utxopia::btc_deposit_tests {
         s
     }
 
-    fun op_return(pool: &Pool, tree: &CommitmentTree, eph_fill: u8, npk_fill: u8): vector<u8> {
+    fun op_return(pool: &Pool, tree: &CommitmentTree, ephemeral_fill: u8, note_public_key_fill: u8): vector<u8> {
         let mut s = vector[0x6au8, 0x49u8, 0x63u8];
         vector::append(&mut s, expected_pool_tag(pool, tree));
-        vector::append(&mut s, bytes(32, eph_fill));
-        vector::append(&mut s, bytes(32, npk_fill));
+        vector::append(&mut s, bytes(32, ephemeral_fill));
+        vector::append(&mut s, bytes(32, note_public_key_fill));
         s
     }
 

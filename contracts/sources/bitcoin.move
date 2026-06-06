@@ -10,7 +10,7 @@ module utxopia::bitcoin {
     use utxopia::errors;
 
     const OP_RETURN: u8 = 0x6a;
-    const DEPOSIT_OP_RETURN_SIZE: u64 = 73; // header(1) + pool_tag(8) + ephemeral(32) + npk(32)
+    const DEPOSIT_OP_RETURN_SIZE: u64 = 73; // header(1) + pool_tag(8) + ephemeral_pubkey(32) + note_public_key(32)
     const DEPOSIT_HEADER_SUI_MAINNET: u8 = 0x60;
     const DEPOSIT_HEADER_SUI_TESTNET4: u8 = 0x62;
     const DEPOSIT_HEADER_SUI_REGTEST: u8 = 0x63;
@@ -180,7 +180,7 @@ module utxopia::bitcoin {
 
     /// Parse one scriptPubKey for the 73-byte v1 Sui deposit OP_RETURN. Accepts
     /// direct-push (0x6a 0x49 ‖ 73) and PUSHDATA1 (0x6a 0x4c 0x49 ‖ 73).
-    /// Returns (ok, pool_tag, ephemeral, npk).
+    /// Returns (ok, pool_tag, ephemeral_pubkey, note_public_key).
     public(package) fun parse_deposit_op_return(script: &vector<u8>): (bool, vector<u8>, vector<u8>, vector<u8>) {
         let n = vector::length(script);
         let payload = if (
@@ -209,15 +209,15 @@ module utxopia::bitcoin {
         (true, slice(&payload, 1, 8), slice(&payload, 9, 32), slice(&payload, 41, 32))
     }
 
-    /// First output carrying a valid 73-byte deposit OP_RETURN. (ok, pool_tag, ephemeral, npk).
+    /// First output carrying a valid 73-byte deposit OP_RETURN. (ok, pool_tag, ephemeral_pubkey, note_public_key).
     public(package) fun find_deposit_op_return(raw_tx: &vector<u8>): (bool, vector<u8>, vector<u8>, vector<u8>) {
         let outs = parse_outputs(raw_tx);
         let mut i = 0;
         let n = vector::length(&outs);
         while (i < n) {
             let o = vector::borrow(&outs, i);
-            let (ok, tag, eph, npk) = parse_deposit_op_return(&o.script_pubkey);
-            if (ok) { return (true, tag, eph, npk) };
+            let (ok, pool_tag, ephemeral_pubkey, note_public_key) = parse_deposit_op_return(&o.script_pubkey);
+            if (ok) { return (true, pool_tag, ephemeral_pubkey, note_public_key) };
             i = i + 1;
         };
         (false, vector[], vector[], vector[])

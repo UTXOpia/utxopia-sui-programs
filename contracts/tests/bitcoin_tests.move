@@ -32,11 +32,11 @@ module utxopia::bitcoin_tests {
         vector::append(&mut script, bytes(8, 0xCC));
         vector::append(&mut script, bytes(32, 0xAA));
         vector::append(&mut script, bytes(32, 0xBB));
-        let (ok, tag, eph, npk) = btc::parse_deposit_op_return(&script);
+        let (ok, tag, ephemeral_pubkey, note_public_key) = btc::parse_deposit_op_return(&script);
         assert!(ok, 0);
         assert!(tag == bytes(8, 0xCC), 1);
-        assert!(eph == bytes(32, 0xAA), 2);
-        assert!(npk == bytes(32, 0xBB), 3);
+        assert!(ephemeral_pubkey == bytes(32, 0xAA), 2);
+        assert!(note_public_key == bytes(32, 0xBB), 3);
     }
 
     #[test]
@@ -45,11 +45,11 @@ module utxopia::bitcoin_tests {
         vector::append(&mut script, bytes(8, 0xCC));
         vector::append(&mut script, bytes(32, 0xCC));
         vector::append(&mut script, bytes(32, 0xDD));
-        let (ok, tag, eph, npk) = btc::parse_deposit_op_return(&script);
+        let (ok, tag, ephemeral_pubkey, note_public_key) = btc::parse_deposit_op_return(&script);
         assert!(ok, 0);
         assert!(tag == bytes(8, 0xCC), 1);
-        assert!(eph == bytes(32, 0xCC), 2);
-        assert!(npk == bytes(32, 0xDD), 3);
+        assert!(ephemeral_pubkey == bytes(32, 0xCC), 2);
+        assert!(note_public_key == bytes(32, 0xDD), 3);
     }
 
     #[test]
@@ -57,7 +57,7 @@ module utxopia::bitcoin_tests {
         // 32-byte commitment OP_RETURN must NOT match the compact deposit layout
         let mut script = vector[0x6au8, 0x20u8];
         vector::append(&mut script, bytes(32, 0xEE));
-        let (ok, _tag, _eph, _npk) = btc::parse_deposit_op_return(&script);
+        let (ok, _tag, _ephemeral_pubkey, _note_public_key) = btc::parse_deposit_op_return(&script);
         assert!(!ok, 0);
     }
 
@@ -73,10 +73,10 @@ module utxopia::bitcoin_tests {
         assert!(vout == 0, 1);
         assert!(btc::output_value(&out) == 50_000, 2);
 
-        let (ok2, _tag, eph, npk) = btc::find_deposit_op_return(&tx);
+        let (ok2, _tag, ephemeral_pubkey, note_public_key) = btc::find_deposit_op_return(&tx);
         assert!(ok2, 3);
-        assert!(eph == bytes(32, 0xAA), 4);
-        assert!(npk == bytes(32, 0xBB), 5);
+        assert!(ephemeral_pubkey == bytes(32, 0xAA), 4);
+        assert!(note_public_key == bytes(32, 0xBB), 5);
 
         let (ok3, _o3, vout3) = btc::find_output_by_script(&tx, &p2tr(0x22));
         assert!(ok3 && vout3 == 0, 6);
@@ -143,11 +143,11 @@ module utxopia::bitcoin_tests {
         s
     }
 
-    fun op_return(eph_fill: u8, npk_fill: u8): vector<u8> {
+    fun op_return(ephemeral_fill: u8, note_public_key_fill: u8): vector<u8> {
         let mut s = vector[0x6au8, 0x49u8, 0x63u8];
         vector::append(&mut s, bytes(8, 0xCC));
-        vector::append(&mut s, bytes(32, eph_fill));
-        vector::append(&mut s, bytes(32, npk_fill));
+        vector::append(&mut s, bytes(32, ephemeral_fill));
+        vector::append(&mut s, bytes(32, note_public_key_fill));
         s
     }
 

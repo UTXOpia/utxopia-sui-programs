@@ -25,7 +25,7 @@ module utxopia::events {
         deposit_vout: u32,
         amount_sats: u64,
         ephemeral_pubkey: vector<u8>,
-        npk: vector<u8>,
+        note_public_key: vector<u8>,
         commitment: vector<u8>,
     }
 
@@ -102,7 +102,7 @@ module utxopia::events {
         deposit_vout: u32,
         amount_sats: u64,
         ephemeral_pubkey: vector<u8>,
-        npk: vector<u8>,
+        note_public_key: vector<u8>,
         commitment: vector<u8>,
     ) {
         event::emit(BtcDepositVerified {
@@ -112,7 +112,7 @@ module utxopia::events {
             deposit_vout,
             amount_sats,
             ephemeral_pubkey,
-            npk,
+            note_public_key,
             commitment,
         });
     }

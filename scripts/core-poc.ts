@@ -76,7 +76,7 @@ async function verifyBitcoinDepositEvidence(): Promise<string> {
   if (!opReturn) {
     throw new Error("missing UTXOpia deposit OP_RETURN");
   }
-  return `poolTag=${opReturn.poolTag.length} ephemeral=${opReturn.ephemeralPubkey.length} npk=${opReturn.npk.length}`;
+  return `poolTag=${opReturn.poolTag.length} ephemeralPubkey=${opReturn.ephemeralPubkey.length} notePublicKey=${opReturn.notePublicKey.length}`;
 }
 
 async function verifySuiVkeyExport(): Promise<string> {

@@ -218,7 +218,51 @@ This section lists externally callable `public fun` functions in `contracts/sour
 
 ### `errors`
 
-`errors` exposes public getters for abort codes used by all modules, including pool pause, invalid commitments, spent nullifiers, invalid redemption, policy rejection, proof verification failure, BTC SPV failures, amount bounds, UTXO duplication, wrong cap/object binding, and timelock errors.
+| Function | Kind | Description |
+|----------|------|-------------|
+| `pool_paused()` | Error code | Pool operation attempted while paused. |
+| `invalid_tree_depth()` | Error code | Invalid Merkle tree depth. |
+| `invalid_commitment()` | Error code | Invalid private note commitment. |
+| `nullifier_spent()` | Error code | Nullifier was already spent. |
+| `redemption_completed()` | Error code | Redemption request was already completed. |
+| `invalid_redemption()` | Error code | Malformed or mismatched redemption data. |
+| `policy_rejected()` | Error code | Pool policy rejected the operation. |
+| `invalid_verifying_key()` | Error code | Groth16 verifying key data is invalid. |
+| `verifying_key_not_found()` | Error code | Requested verifying key is not registered. |
+| `invalid_proof()` | Error code | Groth16 proof payload is invalid. |
+| `too_many_public_inputs()` | Error code | Proof public-input count exceeds the accepted bound. |
+| `verification_failed()` | Error code | Proof verification failed. |
+| `invalid_join_split()` | Error code | JoinSplit public inputs or proof binding are invalid. |
+| `invalid_btc_deposit()` | Error code | Bitcoin deposit transaction or OP_RETURN is invalid. |
+| `btc_deposit_already_claimed()` | Error code | Bitcoin deposit outpoint was already claimed. |
+| `stale_merkle_root()` | Error code | JoinSplit root is not current or recently accepted. |
+| `tree_full()` | Error code | Commitment tree has reached capacity. |
+| `commitment_out_of_field()` | Error code | Commitment bytes are not canonical BN254 field data. |
+| `header_prev_mismatch()` | Error code | Bitcoin header does not connect to known previous hash. |
+| `pow_not_met()` | Error code | Bitcoin header proof-of-work is below target. |
+| `bad_bits()` | Error code | Bitcoin compact target bits are invalid. |
+| `unknown_block()` | Error code | Referenced Bitcoin block is unknown. |
+| `not_canonical()` | Error code | Referenced Bitcoin block is not on the canonical chain. |
+| `insufficient_conf()` | Error code | Bitcoin transaction does not have enough confirmations. |
+| `bad_merkle_proof()` | Error code | Bitcoin merkle proof does not prove inclusion. |
+| `lc_paused()` | Error code | Light-client operation attempted while paused. |
+| `bad_header_len()` | Error code | Bitcoin header batch length is invalid. |
+| `batch_too_large()` | Error code | Bitcoin header batch exceeds the accepted bound. |
+| `tx_truncated()` | Error code | Raw Bitcoin transaction is truncated. |
+| `invalid_raw_tx()` | Error code | Raw Bitcoin transaction encoding is invalid. |
+| `amount_too_small()` | Error code | Amount is below configured minimum. |
+| `amount_too_large()` | Error code | Amount exceeds configured maximum. |
+| `fee_exceeds_amount()` | Error code | Fee is greater than the operation amount. |
+| `invalid_stealth_op_return()` | Error code | OP_RETURN stealth payload is invalid. |
+| `utxo_exists()` | Error code | Pool UTXO already exists. |
+| `deposit_linkage_failed()` | Error code | Deposit output and note commitment linkage failed. |
+| `approval_used()` | Error code | Ika signing approval was already consumed. |
+| `approval_expired()` | Error code | Ika signing approval expired. |
+| `wrong_cap()` | Error code | Capability object is not bound to the target object. |
+| `wrong_object()` | Error code | Supplied shared object does not match the pool binding. |
+| `already_bound()` | Error code | One-time pool binding is already set. |
+| `no_pending_proposal()` | Error code | No timelocked config proposal is pending. |
+| `timelock_not_elapsed()` | Error code | Timelocked config proposal is not executable yet. |
 
 ## Object Model
 

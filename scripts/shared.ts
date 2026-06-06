@@ -71,7 +71,6 @@ export interface UtxopiaSuiState {
     ikaApprovalTxDigest?: string;
     completeTxDigest?: string;
   };
-  lastVerifiedBtcDeposit?: SuiObjectRef;
   lastTransact?: {
     circuit: string;
     shieldTxDigest?: string;

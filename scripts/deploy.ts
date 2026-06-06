@@ -60,7 +60,6 @@ delete state.verifyingKeyRegistry;
 delete state.vk;
 delete state.lastRedemption;
 delete state.lastTransact;
-delete state.lastVerifiedBtcDeposit;
 delete (state as any).lastSuiRegtestFlow;
 delete (state as any).suiDepositRelayCommitments;
 delete (state as any).lastSuiDepositRelay;

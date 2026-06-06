@@ -499,56 +499,6 @@ function assertSuiSuccess(label: string, result: any) {
   }
 }
 
-async function assertVerifiedDepositMatches(expected: {
-  objectId: string;
-  depositTxid: Uint8Array;
-  depositVout: number;
-  amountSats: bigint;
-  opReturnPayload: Uint8Array;
-  commitment: Uint8Array;
-  verifiedRoot: Uint8Array;
-}) {
-  const client = new SuiJsonRpcClient({ url: rpcUrl, network: "testnet" });
-  const object = await client.getObject({
-    id: expected.objectId,
-    options: { showContent: true, showType: true },
-  });
-  const data = object.data;
-  if (!data?.type?.endsWith("::btc_light_client::VerifiedBtcDeposit")) {
-    throw new Error(`Sui object ${expected.objectId} is not a VerifiedBtcDeposit`);
-  }
-  const content = data.content as any;
-  const fields = content?.fields as Record<string, unknown> | undefined;
-  if (!fields) {
-    throw new Error(`Sui object ${expected.objectId} has no parsed fields`);
-  }
-
-  assertHexField("deposit_txid", bytesField(fields.deposit_txid), expected.depositTxid);
-  assertNumberField("deposit_vout", numberField(fields.deposit_vout), expected.depositVout);
-  assertBigintField("amount_sats", bigintField(fields.amount_sats), expected.amountSats);
-  assertHexField("op_return_payload", bytesField(fields.op_return_payload), expected.opReturnPayload);
-  assertHexField("commitment", bytesField(fields.commitment), expected.commitment);
-  assertHexField("verified_root", bytesField(fields.verified_root), expected.verifiedRoot);
-}
-
-function assertHexField(label: string, actual: Uint8Array | null, expected: Uint8Array) {
-  if (!actual || toHex(actual) !== toHex(expected)) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
-}
-
-function assertNumberField(label: string, actual: number | null, expected: number) {
-  if (actual !== expected) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
-}
-
-function assertBigintField(label: string, actual: bigint | null, expected: bigint) {
-  if (actual !== expected) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
-}
-
 function bytesToBigintBE(bytes: Uint8Array): bigint {
   let result = 0n;
   for (const byte of bytes) result = (result << 8n) | BigInt(byte);

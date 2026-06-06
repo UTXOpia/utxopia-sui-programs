@@ -493,7 +493,7 @@ and is replaced by the `merkle` module (separate spec). The Poseidon tree MUST m
 - **`btc-deposit`** — sole consumer of `verify_tx_inclusion` / `consume_inclusion`.
   Replaces the stub `new_verified_deposit`/`complete_verified_deposit`
   (`btc_deposit.move`, `btc_light_client.move`). Parses OP_RETURN
-  (`ephemeralPub||npk`, 64 bytes, `bitcoin.rs:14`/`DEPOSIT_OP_RETURN_SIZE`), extracts
+  (`header||pool_tag||ephemeralPub||npk`, 73 bytes), extracts
   amount from the SPV-verified tx output, applies fees, computes
   `Poseidon(npk, ZKBTC_TOKEN_ID, amount)` (`crypto.rs::compute_commitment`,
   `complete_deposit.rs:401-403`), inserts into the merkle tree, dedups via

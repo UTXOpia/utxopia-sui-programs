@@ -8,8 +8,11 @@ import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Curve, SignatureAlgorithm } from "@ika.xyz/sdk";
 import {
   BN254_FIELD_PRIME,
+  buildDepositOpReturn,
   bytesToBigint,
   computeBoundParamsHash,
+  DEPOSIT_BITCOIN_NETWORK,
+  DEPOSIT_DESTINATION_CHAIN,
   eddsaGetPubKey,
   eddsaPoseidonSign,
   poseidonHashSync,
@@ -41,6 +44,7 @@ const state = readState();
 const SUI_RPC_URL = process.env.UTXOPIA_SUI_RPC_URL ?? state.rpcUrl ?? "https://fullnode.testnet.sui.io:443";
 const packageId = requireState(state.packageId, "packageId");
 const pool = requireState(state.pool, "pool");
+const commitmentTree = requireState(state.commitmentTree, "commitmentTree");
 const verifiedDeposit = requireState(state.lastVerifiedBtcDeposit, "lastVerifiedBtcDeposit");
 const btcDepositRegistry = requireState(state.btcDepositRegistry, "btcDepositRegistry");
 const utxoSet = requireState(state.utxoSet, "utxoSet");
@@ -253,9 +257,10 @@ console.log(JSON.stringify({
 cleanupProof(note.tmpDir);
 
 async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
-  console.log("Creating direct regtest BTC deposit to pool with OP_RETURN(ephemeralPub || npk)...");
+  console.log("Creating direct regtest BTC deposit to pool with compact OP_RETURN...");
   const ephPub = randomBytes(32);
-  const payloadHex = ephPub.toString("hex") + Buffer.from(fieldToSuiBytes(inputNpk)).toString("hex");
+  const opReturnPayload = buildSuiDepositOpReturnPayload(ephPub, fieldToSuiBytes(inputNpk));
+  const payloadHex = Buffer.from(opReturnPayload).toString("hex");
   const poolAddress = process.env.UTXOPIA_SUI_REGTEST_POOL_BTC_ADDRESS ?? getNewAddress("bech32m");
   const depositTxid = createOpReturnTx(poolAddress, Number(depositAmount), payloadHex);
   const minerAddress = getNewAddress("bech32m");
@@ -278,8 +283,39 @@ async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
     depositVout: Number(depositOutput.n),
     amountSats: outputAmountSats,
     poolAddress,
-    opReturnPayload: hexToBytes(payloadHex),
+    opReturnPayload,
   };
+}
+
+function buildSuiDepositOpReturnPayload(ephemeralPub: Uint8Array, npk: Uint8Array): Uint8Array {
+  const tagInput = concatBytes([
+    new TextEncoder().encode("UTXOPIA_SUI"),
+    suiAddressToBytes(pool.objectId),
+    suiAddressToBytes(commitmentTree.objectId),
+  ]);
+  return buildDepositOpReturn(ephemeralPub, npk, {
+    destinationChain: DEPOSIT_DESTINATION_CHAIN.SUI,
+    bitcoinNetwork: DEPOSIT_BITCOIN_NETWORK.REGTEST,
+    poolTag: sha256(tagInput).slice(0, 8),
+  });
+}
+
+function suiAddressToBytes(value: string): Uint8Array {
+  const hex = value.startsWith("0x") ? value.slice(2) : value;
+  if (hex.length > 64) {
+    throw new Error(`invalid Sui address: ${value}`);
+  }
+  return hexToBytes(hex.padStart(64, "0"));
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }
 
 async function broadcastWithdrawal(depositTxid: string, depositVout: number, inputAmountSats: bigint, sendAmountSats: bigint) {

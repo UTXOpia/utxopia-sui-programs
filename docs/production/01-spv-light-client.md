@@ -564,9 +564,9 @@ and is replaced by the `merkle` module (separate spec). The Poseidon tree MUST m
 ### E2E (regtest)
 - **E1** rewire `chains/sui/scripts/regtest-flow.ts` to: start regtest, mine blocks,
   relay real headers via `submit_headers`, build a real merkle proof, call
-  `verify_tx_inclusion`, then drive `btc_deposit`. Replaces the fabricated
-  `VerifiedBtcDeposit` (`regtest-flow.ts:210, 701-715`). Assert end-to-end deposit
-  commitment matches the SDK-computed root.
+  `verify_tx_inclusion`, then drive `btc_deposit`. Keep the script on that direct
+  SPV path and add a second proof-checked redeem fixture before claiming full
+  deposit -> transfer -> redeem coverage under regtest.
 
 ---
 

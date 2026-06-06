@@ -27,6 +27,7 @@ import {
   waitForTxIndexed,
   bitcoinCli,
   fetchMerkleProof,
+  stripWitnessData,
 } from "./lib/regtest-helpers";
 import { ROOT, readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
@@ -45,7 +46,6 @@ const SUI_RPC_URL = process.env.UTXOPIA_SUI_RPC_URL ?? state.rpcUrl ?? "https://
 const packageId = requireState(state.packageId, "packageId");
 const pool = requireState(state.pool, "pool");
 const commitmentTree = requireState(state.commitmentTree, "commitmentTree");
-const verifiedDeposit = requireState(state.lastVerifiedBtcDeposit, "lastVerifiedBtcDeposit");
 const btcDepositRegistry = requireState(state.btcDepositRegistry, "btcDepositRegistry");
 const utxoSet = requireState(state.utxoSet, "utxoSet");
 const lightClient = requireState(state.lightClient, "lightClient");
@@ -96,21 +96,18 @@ await waitForEsplora(ESPLORA_URL, 30_000);
 
 const note = await buildJoinSplitNote(amount);
 const deposit = await createDirectDeposit(note.inputNpk, amount);
-await assertVerifiedDepositMatches({
-  objectId: verifiedDeposit.objectId,
-  depositTxid: reverseHexToBytes(deposit.depositTxid),
-  depositVout: deposit.depositVout,
-  amountSats: amount,
-  opReturnPayload: deposit.opReturnPayload,
-  commitment: fieldToSuiBytes(note.inputCommitment),
-  verifiedRoot: fieldToSuiBytes(note.merkle.root),
-});
 
-console.log("Submitting Sui verified BTC deposit...");
+console.log("Submitting Sui SPV BTC deposit completion...");
+const depositProof = await fetchMerkleProof(deposit.depositTxid, ESPLORA_URL);
+const depositBlockHash = btc(`getblockhash ${depositProof.block_height}`);
 const shieldTx = await adapter.buildBtcDepositTransaction({
-  verifiedDepositObjectId: verifiedDeposit.objectId,
-  verifiedDepositVersion: verifiedDeposit.version,
-  verifiedDepositDigest: verifiedDeposit.digest,
+  blockHash: reverseHexToBytes(depositBlockHash),
+  sweepTxid: reverseHexToBytes(deposit.depositTxid),
+  txIndex: depositProof.pos,
+  merkleSiblings: depositProof.merkle.map(reverseHexToBytes),
+  pathBits: BigInt(depositProof.pos),
+  sweepRawTx: deposit.rawTx,
+  directToPool: true,
 });
 const shieldResult = await executeTransactionKind(shieldTx.bytes);
 assertSuiSuccess("shield", shieldResult);
@@ -138,82 +135,13 @@ const transactTx = await adapter.buildTransactTransaction({
 const transactResult = await executeTransactionKind(transactTx.bytes);
 assertSuiSuccess("transact", transactResult);
 
-const withdrawal = await broadcastWithdrawal(deposit.depositTxid, deposit.depositVout, deposit.amountSats, amount - minerFee);
-
-console.log("Submitting Sui redemption request...");
-const requestTx = await adapter.buildRedemptionTransaction({
-  inputNotes: [],
-  btcAddress: toHex(createHash("sha256").update(withdrawal.destinationAddress).digest()),
-  amountSats: amount,
-  maxFeeSats: minerFee,
-  proof: new Uint8Array(),
-});
-const requestResult = await executeTransactionKind(requestTx.bytes);
-assertSuiSuccess("request redemption", requestResult);
-const redemptionId = findEventField(requestResult.events, "RedemptionRequested", "redemption_id");
-if (redemptionId === undefined) {
-  throw new Error(`RedemptionRequested event missing from ${requestResult.digest}`);
-}
-
-console.log("Submitting Sui redemption UTXO selection...");
-const markProcessingTx = await adapter.buildMarkProcessingTransaction({
-  redemptionId: BigInt(redemptionId),
-  selectedUtxos: [{
-    txid: reverseHexToBytes(deposit.depositTxid),
-    vout: deposit.depositVout,
-  }],
-  estimatedMinerFeeSats: minerFee,
-});
-const markProcessingResult = await executeTransactionKind(markProcessingTx.bytes);
-assertSuiSuccess("mark redemption processing", markProcessingResult);
-
-let approveResult: Awaited<ReturnType<typeof executeTransactionKind>> | null = null;
-let ikaSigningResult: Awaited<ReturnType<typeof submitNativeIkaSigning>> | null = null;
-if (withdrawalSignerMode === "ika") {
-  console.log("Submitting Sui Ika policy approval...");
-  const withdrawalSighash = createHash("sha256").update(withdrawal.rawTxHex).digest();
-  const approveTx = await adapter.buildIkaApprovalTransaction({
-    redemptionId: BigInt(redemptionId),
-    sighash: withdrawalSighash,
-  });
-  approveResult = await executeTransactionKind(approveTx.bytes);
-  assertSuiSuccess("Ika policy approval", approveResult);
-  ikaSigningResult = await submitNativeIkaSigning(withdrawalSighash, ikaSigningConfig!);
-} else {
-  console.log("Skipping Sui Ika policy approval; regtest withdrawal uses the local relayer signer.");
-}
-
-console.log("Submitting Sui redemption completion...");
-const freshRedemptionCap = await refreshObjectRef(redemptionCap.objectId);
-state.redemptionCap = freshRedemptionCap;
-adapter = createAdapter(freshRedemptionCap);
-const withdrawalProof = await fetchMerkleProof(withdrawal.withdrawTxid, ESPLORA_URL);
-const withdrawalBlockHash = btc(`getblockhash ${withdrawalProof.block_height}`);
-const completeTx = await adapter.buildCompleteRedemptionTransaction({
-  redemptionId: BigInt(redemptionId),
-  btcTxid: reverseHexToBytes(withdrawal.withdrawTxid),
-  blockHash: reverseHexToBytes(withdrawalBlockHash),
-  txIndex: withdrawalProof.pos,
-  merkleSiblings: withdrawalProof.merkle.map(reverseHexToBytes),
-  pathBits: BigInt(withdrawalProof.pos),
-  rawTx: hexToBytes(withdrawal.rawTxHex),
-});
-const completeResult = await executeTransactionKind(completeTx.bytes);
-assertSuiSuccess("complete redemption", completeResult);
-
 (state as any).lastSuiRegtestFlow = {
   amountSats: amount.toString(),
   depositTxid: deposit.depositTxid,
   shieldTxDigest: shieldResult.digest,
   transactTxDigest: transactResult.digest,
-  withdrawTxid: withdrawal.withdrawTxid,
-  withdrawalSignerMode,
-  redemptionId: String(redemptionId),
-  requestTxDigest: requestResult.digest,
-  markProcessingTxDigest: markProcessingResult.digest,
-  ...(approveResult ? { ikaApprovalTxDigest: approveResult.digest } : {}),
-  ...(ikaSigningResult ? { ikaSigning: ikaSigningResult } : {}),
-  completeTxDigest: completeResult.digest,
+  status: "deposit_and_transact_complete",
+  redeemStatus: "disabled_until_real_redeem_proof_fixture",
 };
 writeState(state);
 
@@ -224,33 +152,16 @@ console.log(JSON.stringify({
     depositVout: deposit.depositVout,
     depositAmountSats: deposit.amountSats.toString(),
     poolAddress: deposit.poolAddress,
-    withdrawTxid: withdrawal.withdrawTxid,
-    destinationAddress: withdrawal.destinationAddress,
   },
   sui: {
     shieldTxDigest: shieldResult.digest,
     shieldStatus: shieldResult.effects?.status,
     transactTxDigest: transactResult.digest,
     transactStatus: transactResult.effects?.status,
-    redemptionId: String(redemptionId),
-    requestTxDigest: requestResult.digest,
-    requestStatus: requestResult.effects?.status,
-    markProcessingTxDigest: markProcessingResult.digest,
-    markProcessingStatus: markProcessingResult.effects?.status,
-    withdrawalSignerMode,
-    ...(approveResult ? {
-      ikaApprovalTxDigest: approveResult.digest,
-      ikaApprovalStatus: approveResult.effects?.status,
-    } : {}),
-    ...(ikaSigningResult ? { ikaSigning: ikaSigningResult } : {}),
-    completeTxDigest: completeResult.digest,
-    completeStatus: completeResult.effects?.status,
   },
   limitations: [
-    "Sui BTC deposit now consumes btc_light_client::VerifiedBtcDeposit before btc_deposit::complete_verified_deposit; create this object with the production Sui SPV verifier before running the flow.",
-    withdrawalSignerMode === "ika"
-      ? "Native Sui Ika policy approval, global Taproot presign, and Taproot sign request are executed; this regtest BTC broadcast still uses the local regtest wallet because the PoC deposit UTXO is created under the local regtest pool address."
-      : "BTC withdrawal is signed by the local regtest relayer wallet; native Sui Ika dWallet signing remains optional for later testnet work.",
+    "Sui BTC deposit completion is SPV-checked in one PTB: btc_light_client::verify_tx_inclusion feeds btc_deposit::complete_deposit.",
+    "BTC redemption is intentionally not run here until this script builds a second proof-checked redeem fixture for the output note.",
   ],
 }, null, 2));
 
@@ -284,6 +195,7 @@ async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
     amountSats: outputAmountSats,
     poolAddress,
     opReturnPayload,
+    rawTx: Uint8Array.from(stripWitnessData(Buffer.from(depositTx.hex, "hex"))),
   };
 }
 
@@ -584,26 +496,6 @@ function assertSuiSuccess(label: string, result: any) {
   }
 }
 
-function bytesField(value: unknown): Uint8Array | null {
-  if (!Array.isArray(value)) return null;
-  const bytes = value.map((entry) => Number(entry));
-  if (!bytes.every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255)) return null;
-  return Uint8Array.from(bytes);
-}
-
-function bigintField(value: unknown): bigint | null {
-  if (typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
-  return null;
-}
-
-function numberField(value: unknown): number | null {
-  const valueBigint = bigintField(value);
-  if (valueBigint == null || valueBigint > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return Number(valueBigint);
-}
-
 interface IkaSuiSigningConfig {
   network: "testnet" | "mainnet";
   dWalletId: string;
@@ -750,57 +642,4 @@ async function refreshObjectRef(objectId: string) {
     version: object.data.version,
     digest: object.data.digest,
   };
-}
-
-async function assertVerifiedDepositMatches(expected: {
-  objectId: string;
-  depositTxid: Uint8Array;
-  depositVout: number;
-  amountSats: bigint;
-  opReturnPayload: Uint8Array;
-  commitment: Uint8Array;
-  verifiedRoot: Uint8Array;
-}) {
-  const client = new SuiJsonRpcClient({
-    url: SUI_RPC_URL,
-    network: "testnet",
-  });
-  const object = await client.getObject({
-    id: expected.objectId,
-    options: { showContent: true, showType: true },
-  });
-  const data = object.data;
-  if (!data?.type?.endsWith("::btc_light_client::VerifiedBtcDeposit")) {
-    throw new Error(`Sui object ${expected.objectId} is not a VerifiedBtcDeposit`);
-  }
-  const content = data.content as any;
-  const fields = content?.fields as Record<string, unknown> | undefined;
-  if (!fields) {
-    throw new Error(`Sui object ${expected.objectId} has no parsed fields`);
-  }
-
-  assertHexField("deposit_txid", bytesField(fields.deposit_txid), expected.depositTxid);
-  assertNumberField("deposit_vout", numberField(fields.deposit_vout), expected.depositVout);
-  assertBigintField("amount_sats", bigintField(fields.amount_sats), expected.amountSats);
-  assertHexField("op_return_payload", bytesField(fields.op_return_payload), expected.opReturnPayload);
-  assertHexField("commitment", bytesField(fields.commitment), expected.commitment);
-  assertHexField("verified_root", bytesField(fields.verified_root), expected.verifiedRoot);
-}
-
-function assertHexField(label: string, actual: Uint8Array | null, expected: Uint8Array) {
-  if (!actual || toHex(actual) !== toHex(expected)) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
-}
-
-function assertNumberField(label: string, actual: number | null, expected: number) {
-  if (actual !== expected) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
-}
-
-function assertBigintField(label: string, actual: bigint | null, expected: bigint) {
-  if (actual !== expected) {
-    throw new Error(`VerifiedBtcDeposit ${label} mismatch`);
-  }
 }

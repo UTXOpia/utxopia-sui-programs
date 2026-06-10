@@ -1,11 +1,14 @@
 module utxopia::transact {
     use sui::object;
+    use utxopia::bound_params;
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
     use utxopia::events;
     use utxopia::nullifier::{Self, NullifierRegistry};
     use utxopia::pool::{Self, Pool};
     use utxopia::verifier::{Self, VerifyingKeyRegistry};
+
+    const ANNOUNCEMENT_TYPE_TRANSFER: u8 = 1;
 
     public fun transact(
         pool: &Pool,
@@ -19,6 +22,7 @@ module utxopia::transact {
         proof_points: vector<u8>,
         nullifiers_in: vector<vector<u8>>,
         commitments_out: vector<vector<u8>>,
+        stealth_data: vector<vector<u8>>,
     ) {
         pool::assert_not_paused(pool);
         // Pin canonical companions: a substituted (empty) NullifierRegistry would otherwise
@@ -30,6 +34,9 @@ module utxopia::transact {
         assert!(commitments_out.length() == (n_outputs as u64), errors::invalid_join_split());
         // Validates total length (and thus that index 0/1 are present) before slicing.
         assert_bound_public_inputs(&public_inputs, n_inputs, n_outputs, &nullifiers_in, &commitments_out);
+
+        // Bind public input 1 (bound_params_hash) for chain/domain separation.
+        assert_public_input_at(&public_inputs, 1, &bound_params::transfer_hash(&stealth_data));
 
         // History-aware Merkle root check: the proof's root (public input 0) must be the
         // current root OR any recent root, so a deposit landing between proof-gen and
@@ -56,9 +63,25 @@ module utxopia::transact {
             i = i + 1;
         };
 
+        // Older callers may bind empty stealth_data; only announce when every
+        // tree output has a stealth blob (the bound-params hash pins the count).
+        let announce = stealth_data.length() == commitments_out.length();
         let mut j = 0;
         while (j < commitments_out.length()) {
-            commitment_tree::insert_commitment_bytes(tree, pool_id, commitments_out[j]);
+            let leaf_index = commitment_tree::insert_commitment_bytes(tree, pool_id, commitments_out[j]);
+            if (announce) {
+                // token_id stays 0: the transferred token is private; scanners
+                // trial-match registered token ids against the commitment.
+                events::stealth_announced(
+                    pool_id,
+                    ANNOUNCEMENT_TYPE_TRANSFER,
+                    stealth_data[j],
+                    0,
+                    commitments_out[j],
+                    leaf_index,
+                    0u256,
+                );
+            };
             j = j + 1;
         };
     }
@@ -90,8 +113,11 @@ module utxopia::transact {
         assert!(expected.length() == 32, errors::invalid_join_split());
         let start = index * 32;
         let mut i = 0;
+        // Public inputs are arkworks little-endian (what the Groth16 verifier consumes);
+        // `expected` targets are big-endian (field_to_be_bytes / bound_params). Reverse
+        // the chunk for the byte comparison.
         while (i < 32) {
-            assert!(*public_inputs.borrow(start + i) == *expected.borrow(i), errors::invalid_join_split());
+            assert!(*public_inputs.borrow(start + 31 - i) == *expected.borrow(i), errors::invalid_join_split());
             i = i + 1;
         };
     }
@@ -100,8 +126,9 @@ module utxopia::transact {
         let start = index * 32;
         let mut out = vector[];
         let mut i = 0;
+        // Reverse little-endian public-input chunk to big-endian (matches stored roots).
         while (i < 32) {
-            vector::push_back(&mut out, *public_inputs.borrow(start + i));
+            vector::push_back(&mut out, *public_inputs.borrow(start + 31 - i));
             i = i + 1;
         };
         out

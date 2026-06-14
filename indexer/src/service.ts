@@ -1,6 +1,5 @@
-import type { SuiUtxopiaEventSource } from "./sui-event-source";
 import type { SuiIndexerStore } from "./storage";
-import type { NormalizedSuiUtxopiaEvent } from "./types";
+import type { NormalizedSuiUtxopiaEvent, SuiEventSource } from "./types";
 
 /** Anything that can fold a batch of events into derived state (e.g. SqliteProjections). */
 export interface EventProjector {
@@ -10,7 +9,7 @@ export interface EventProjector {
 export class SuiUtxopiaIndexerService {
   constructor(
     private readonly packageId: string,
-    private readonly source: SuiUtxopiaEventSource,
+    private readonly source: SuiEventSource,
     private readonly store: SuiIndexerStore,
     private readonly projections?: EventProjector,
   ) {}

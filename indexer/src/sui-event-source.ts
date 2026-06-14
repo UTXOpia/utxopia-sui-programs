@@ -3,6 +3,7 @@ import type { SuiEvent } from "@mysten/sui/jsonRpc";
 import type {
   NormalizedSuiUtxopiaEvent,
   SuiEventCursor,
+  SuiEventSource,
   SuiIndexerConfig,
   SuiUtxopiaEventType,
 } from "./types";
@@ -21,11 +22,16 @@ const KNOWN_EVENT_TYPES = new Set<SuiUtxopiaEventType>([
   "JoinSplitVerified",
 ]);
 
-export class SuiUtxopiaEventSource {
+export class SuiUtxopiaEventSource implements SuiEventSource {
   private readonly client: SuiJsonRpcClient;
 
   constructor(private readonly config: SuiIndexerConfig) {
     this.client = new SuiJsonRpcClient({ url: config.rpcUrl });
+  }
+
+  /** Move event types keep the ORIGINAL defining package across upgrades. */
+  private get eventsPackage(): string {
+    return this.config.eventsPackageId ?? this.config.packageId;
   }
 
   async poll(cursor?: SuiEventCursor): Promise<{
@@ -36,7 +42,7 @@ export class SuiUtxopiaEventSource {
     const page = await this.client.queryEvents({
       query: {
         MoveEventModule: {
-          package: this.config.packageId,
+          package: this.eventsPackage,
           module: "events",
         },
       },
@@ -76,6 +82,7 @@ export class SuiUtxopiaEventSource {
         transactionDigest: event.id.txDigest,
         eventSequence: event.id.eventSeq,
       },
+      timestampMs: event.timestampMs ?? undefined,
       payload: this.payload(event.parsedJson),
     };
   }

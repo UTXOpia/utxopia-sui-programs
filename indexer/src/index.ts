@@ -1,5 +1,7 @@
 export * from "./types";
 export * from "./sui-event-source";
+export * from "./sui-graphql-source";
+export * from "./explorer-projection";
 export * from "./bitcoin-node";
 export * from "./storage";
 export * from "./projections";

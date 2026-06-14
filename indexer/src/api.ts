@@ -1,8 +1,11 @@
 import type { SuiIndexerStore } from "./storage";
 import type { SqliteProjections } from "./projections";
+import { buildExplorerStats, buildExplorerTransactions } from "./explorer-projection";
 
 export interface SuiIndexerApiConfig {
   packageId: string;
+  /** Pool BTC address surfaced in shield btcMeta (optional). */
+  poolAddress?: string | null;
 }
 
 export function createSuiIndexerApi(
@@ -23,6 +26,18 @@ export function createSuiIndexerApi(
 
     if (url.pathname === "/events") {
       return json(await store.getEventsAfter(cursorFromUrl(url)));
+    }
+
+    // Normalized explorer API — what web/lib/sui/explorer.ts computes client-side today,
+    // served from the DB so the web becomes a thin reader (events → DB → web).
+    if (url.pathname === "/api/explorer/transactions") {
+      const events = await store.getEventsAfter();
+      return json(buildExplorerTransactions(events, { poolAddress: config.poolAddress ?? null }));
+    }
+
+    if (url.pathname === "/api/explorer/stats") {
+      const events = await store.getEventsAfter();
+      return json(buildExplorerStats(events));
     }
 
     // Projection-backed read API for the SDK (note scanning is client-side / Mode A).

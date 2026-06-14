@@ -62,3 +62,64 @@ All pool companion ids verified set on-chain.
    Do NOT repoint the public web testnet at this dev/regtest deployment.
 6. **Pause/abandon the superseded package(s)** — `pool::set_paused(adminCap, pool, true)`.
    Confirm which package is production first (web currently uses `0x719b02e4…`).
+
+---
+
+## 2026-06-14 — superseding redeploy `0x916737cd…` (finish-forward)
+
+The `0xaa466626…` package above was itself superseded by a newer fresh publish,
+`0x916737cd…` (a brand-new package line, `UpgradeCap` version 1, type-origin == self).
+`deploy.ts` had run (published + cleared shared-object refs from the state file) but
+`init.ts` had **not**, leaving the deployment half-finished and `web/networks.json` in a
+broken hybrid (new `packageId` paired with the old `0x91c4577d…`-origin pool). This pass
+completed the on-chain initialization.
+
+### New deployment (testnet, package `0x916737cd9b1970eb5b8b400a501ac07cd7ffa25d5da433cf9391ee4e44a2da05`)
+
+| Object | ID |
+|--------|-----|
+| upgradeCap | `0x8fcc0a21b779014a086508c1b07a49a7634c589e81941c820da8d8541e763cd2` |
+| adminCap | `0xa110a55b44e1ed202c0df6b1b0f11700725894ee56c8ef4bef95ac91a3a8602a` |
+| pool | `0xb26294ec15a509a9f03ff1d27c39c31c421d0cfbe4ef5b6fe7d2f348bffaa8e2` |
+| commitmentTree | `0x349f86a4e189f673ae295df1a2e3aef0445a21f4d8e22bbeee981620d897338c` |
+| btcDepositRegistry | `0x1872bdc48edcd9eafcce04ba7fe6d10c1921db8a0ee7837d6f25a92fcb954ae0` |
+| utxoSet | `0x7c330bb24d78b1ef6f4577e88740840ddd0869684ea6bc46394696d6540eb677` |
+| nullifierRegistry | `0x1ba94c10d3673b6deffbb99a49c5a9c95ed2f5cddfc29d939e164cb1a3534edc` |
+| redemptionQueue | `0xea7d90ce86bbf0411e58eae7c5bc728cd1d06896833ffd01accd32458d6b8bd4` |
+| redemptionCap | `0x3031a5051b9b9358b52521d89a8ef9da5675fe2fc77295060097ac62004e5d34` |
+| verifyingKeyRegistry | `0x0689c95e40bd13a50cbc67015c32589c4ffb58d3c93bf474c0a7c8dfce355be5` |
+| tokenRegistry | `0xd717a5aa327ef23d402535f957ebbd90fb7a433ca389fbd22054f5d311dde2b3` (empty, bound) |
+
+### Done this pass
+
+- `init.ts` — pool, commitment tree, btc-deposit registry, utxo set, nullifier registry,
+  redemption queue, verifier registry; all five companions pinned to the pool.
+- `register-vkey.ts` — all **15** circuits registered (`joinsplit_1x1..1x5, 2x1..2x4,
+  3x1..3x3, 4x1, 4x2, 5x1`). vkHashes are deterministic and match prior deployments.
+- `init-token-registry.ts` — token registry created + bound (left **empty**, matching prior;
+  `register-sui.ts` is intentionally skipped — SUI uses `depositMode: direct`).
+- `_bind-pool-btc-script.ts` — `btc_pool_script` bound to
+  `P2TR(32697b924eeb4c76758383f7ac60e6b87bfd57b8cb2b7a82e7caaf262f2f9908)` (relayer dWallet
+  `0xe926ed3b…`, reused). Digest `6EXPKYWHgfhyP2sjsJEfqxwkjxydTuRdUUtz2Qq8ejNF`.
+- `contracts/Published.toml` regenerated to `published-at`/`original-id = 0x916737cd…`.
+
+### BTC light client — DONE (regtest)
+
+Docker Desktop's backend VM was wedged (CLI hung); a full backend kill + relaunch cleared it.
+Restarted the existing `utxopia-esplora-regtest` container (regtest tip 663) and ran
+`init-light-client.ts`:
+
+- lightClient `0xaec86662571066800080e9ca070abcf81d5e0bde40e309a40a1ac46dbfdd9a71` (regtest,
+  NETWORK_REGTEST, anchored at block 663), lightClientAdminCap
+  `0xf36ccc98028a8c03e3bf1d7cb9e86c1702d277f716d7f3e9d344ab56b1b934df`.
+- `pool.light_client_id` bound (bindDigest `4zZhWhMAUtiayPRxy5xSxqEzqn6AaBopeS96qEbEAwoZ`).
+- Verified on-chain: all six companions + `btc_pool_script` set, `paused = false`.
+
+### ⚠️ Remaining
+
+1. **Repoint `web/networks.json`** — deferred on purpose. Its `lightClient` (`0x9a897a46…`)
+   belongs to the old `0x91c4577d…` package, so a partial repoint would just create a new
+   hybrid. Repoint pool + all companions + `eventsPackageId` (→ `0x916737cd…`) + light client
+   **together** once step 1 exists. Also reconcile the **Ika dWallet divergence**: web uses
+   `dWalletId 0x7f0b719d…`, but the relayer state and the bound BTC pool script use
+   `0xe926ed3b…` / pubkey `32697b92…`; the `bitcoin.poolAddress` must match the bound P2TR.

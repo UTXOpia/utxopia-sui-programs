@@ -42,7 +42,14 @@ module utxopia::errors {
     const E_ALREADY_BOUND: u64 = 41;
     const E_NO_PENDING_PROPOSAL: u64 = 42;
     const E_TIMELOCK_NOT_ELAPSED: u64 = 43;
-
+    const E_TOKEN_ALREADY_REGISTERED: u64 = 44;
+    const E_TOKEN_DISABLED: u64 = 45;
+    const E_TOKEN_NOT_REGISTERED: u64 = 46;
+    const E_DEPOSIT_CAP_EXCEEDED: u64 = 47;
+    const E_INVALID_TOKEN_CONFIG: u64 = 48;
+    const E_ACCOUNTING_DESYNC: u64 = 49;
+    const E_TREE_NOT_FULL: u64 = 50;
+    const E_INVALID_TREE_ROTATION: u64 = 51;
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
     public fun invalid_commitment(): u64 { E_INVALID_COMMITMENT }
@@ -86,4 +93,12 @@ module utxopia::errors {
     public fun already_bound(): u64 { E_ALREADY_BOUND }
     public fun no_pending_proposal(): u64 { E_NO_PENDING_PROPOSAL }
     public fun timelock_not_elapsed(): u64 { E_TIMELOCK_NOT_ELAPSED }
+    public fun token_already_registered(): u64 { E_TOKEN_ALREADY_REGISTERED }
+    public fun token_disabled(): u64 { E_TOKEN_DISABLED }
+    public fun token_not_registered(): u64 { E_TOKEN_NOT_REGISTERED }
+    public fun deposit_cap_exceeded(): u64 { E_DEPOSIT_CAP_EXCEEDED }
+    public fun invalid_token_config(): u64 { E_INVALID_TOKEN_CONFIG }
+    public fun accounting_desync(): u64 { E_ACCOUNTING_DESYNC }
+    public fun tree_not_full(): u64 { E_TREE_NOT_FULL }
+    public fun invalid_tree_rotation(): u64 { E_INVALID_TREE_ROTATION }
 }

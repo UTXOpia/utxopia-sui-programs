@@ -1,15 +1,3 @@
-/// On-chain Poseidon commitment Merkle tree (depth 16).
-///
-/// Replaces the fake SHA256 "root chain" in `merkle.move` with a real incremental
-/// binary Poseidon Merkle tree, using Sui's native `sui::poseidon::poseidon_bn254`.
-/// Roots are bit-identical to the circom JoinSplit circuit, the Solana on-chain tree,
-/// and the SDK (`sdk/src/commitment-tree.ts`), so deposit/transact commitments are
-/// actually provable. Direct port of Solana `state/commitment_tree.rs`
-/// (frontier cache + precomputed zero ladder + rolling root history).
-///
-/// Interop constants (tree depth, zero ladder, node-hash order, leaf representation)
-/// are the cross-chain contract and MUST NOT change. The M0 parity gate
-/// (`sui/poseidon-parity`) and tests U1/U2 below prove `poseidon_bn254` == circomlibjs.
 module utxopia::commitment_tree {
     use sui::object::{Self, UID};
     use sui::tx_context::TxContext;
@@ -17,106 +5,71 @@ module utxopia::commitment_tree {
     use sui::poseidon;
     use utxopia::errors;
     use utxopia::events;
-
     const TREE_DEPTH: u64 = 16;
-    const MAX_LEAVES: u64 = 65_536; // 2^16
+    const MAX_LEAVES: u64 = 65_536;
     const ROOT_HISTORY_SIZE: u64 = 100;
-
-    /// BN254 scalar field modulus `r`.
     const BN254_FR: u256 =
         0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001;
-
-    /// Shared object. One per tree. Mirrors the Solana `CommitmentTree` PDA.
     public struct CommitmentTree has key {
         id: UID,
         tree_number: u32,
-        next_index: u64,               // leaves inserted == leaf_index of next insert
-        current_root: u256,            // == ZERO[16] when empty
-        filled_subtrees: vector<u256>, // length TREE_DEPTH; the "frontier"
-        root_history: vector<u256>,    // ring buffer, length ROOT_HISTORY_SIZE
-        root_history_index: u64,       // next write position in the ring
+        next_index: u64,
+        current_root: u256,
+        filled_subtrees: vector<u256>,
+        root_history: vector<u256>,
+        root_history_index: u64,
     }
-
-    // ---------------------------------------------------------------------
-    // Init
-    // ---------------------------------------------------------------------
-
-    /// Create and share an empty tree (tree_number 0). Permissionless, matching the
-    /// other registries' `initialize_*` entrypoints; inserts are package-gated below.
     public fun initialize(ctx: &mut TxContext) {
         create(0, ctx)
     }
-
-    /// Create and share an empty tree with an explicit tree_number.
     public(package) fun create(tree_number: u32, ctx: &mut TxContext) {
         transfer::share_object(new_tree(tree_number, ctx))
     }
-
-    /// Build (but do not share) an empty tree.
     fun new_tree(tree_number: u32, ctx: &mut TxContext): CommitmentTree {
         let mut filled_subtrees = vector[];
         let mut level = 0;
         while (level < TREE_DEPTH) {
-            // filled_subtrees[i] is never read before being written by a prior
-            // left-child insert at level i; seed with ZERO[i] to match Solana.
             vector::push_back(&mut filled_subtrees, zero_hash(level));
             level = level + 1;
         };
-
         let mut root_history = vector[];
         let mut i = 0;
         while (i < ROOT_HISTORY_SIZE) {
             vector::push_back(&mut root_history, 0u256);
             i = i + 1;
         };
-
         CommitmentTree {
             id: object::new(ctx),
             tree_number,
             next_index: 0,
-            current_root: zero_hash(TREE_DEPTH), // ZERO[16], the empty-tree root
+            current_root: zero_hash(TREE_DEPTH),
             filled_subtrees,
             root_history,
             root_history_index: 0,
         }
     }
-
-    // ---------------------------------------------------------------------
-    // Core insert (port of commitment_tree.rs::insert_leaf)
-    // ---------------------------------------------------------------------
-
-    /// Append one leaf field element. Returns the leaf index written.
-    /// Aborts if the tree is full or the leaf is not a canonical field element.
     public(package) fun insert_leaf(t: &mut CommitmentTree, leaf: u256): u64 {
         assert!(leaf < BN254_FR, errors::commitment_out_of_field());
         let leaf_index = t.next_index;
         assert!(leaf_index < MAX_LEAVES, errors::tree_full());
-
         let mut current = leaf;
         let mut index = leaf_index;
         let mut level = 0;
         while (level < TREE_DEPTH) {
             if (index % 2 == 0) {
-                // left child: cache for the future right sibling, hash with zero.
                 *vector::borrow_mut(&mut t.filled_subtrees, level) = current;
                 current = hash_node(current, zero_hash(level));
             } else {
-                // right child: combine with the cached left sibling.
                 let left = *vector::borrow(&t.filled_subtrees, level);
                 current = hash_node(left, current);
             };
             index = index / 2;
             level = level + 1;
         };
-
         update_root(t, current);
         t.next_index = leaf_index + 1;
         leaf_index
     }
-
-    /// Drop-in replacement for the old `merkle::insert_commitment`. Takes a commitment
-    /// as 32 big-endian bytes, inserts it, and emits `commitment_inserted` +
-    /// `merkle_root_updated` keyed on `pool_id`. Returns the leaf index.
     public(package) fun insert_commitment_bytes(
         t: &mut CommitmentTree,
         pool_id: address,
@@ -128,28 +81,15 @@ module utxopia::commitment_tree {
         events::merkle_root_updated(pool_id, t.next_index, field_to_be_bytes(t.current_root));
         leaf_index
     }
-
-    /// parent = Poseidon([left, right]) — circomlib `Poseidon(2)`, arity 2, ordered.
     fun hash_node(left: u256, right: u256): u256 {
         poseidon::poseidon_bn254(&vector[left, right])
     }
-
-    /// Archive the previous current_root into the ring buffer, then advance.
-    /// Port of commitment_tree.rs::update_root.
     fun update_root(t: &mut CommitmentTree, new_root: u256) {
         let pos = t.root_history_index % ROOT_HISTORY_SIZE;
         *vector::borrow_mut(&mut t.root_history, pos) = t.current_root;
         t.root_history_index = t.root_history_index + 1;
         t.current_root = new_root;
     }
-
-    // ---------------------------------------------------------------------
-    // Root validation (consumed by transact)
-    // ---------------------------------------------------------------------
-
-    /// True if `root` is the current root or any root in the recent history window.
-    /// `0` (the unfilled-slot sentinel) is never a legitimate root and is rejected,
-    /// so a forged `root == 0` can never pass (R11).
     public fun is_valid_root(t: &CommitmentTree, root: u256): bool {
         if (root == 0) return false;
         if (root == t.current_root) return true;
@@ -161,42 +101,33 @@ module utxopia::commitment_tree {
         };
         false
     }
-
-    /// Byte-boundary variant for `transact` public-input checks. Returns false (rather
-    /// than aborting) for non-canonical roots so they surface as a stale-root rejection.
     public fun is_valid_root_bytes(t: &CommitmentTree, root_be: &vector<u8>): bool {
         let v = be_bytes_to_u256(root_be);
         if (v >= BN254_FR) return false;
         is_valid_root(t, v)
     }
-
     public fun current_root(t: &CommitmentTree): u256 { t.current_root }
-
     public fun current_root_bytes(t: &CommitmentTree): vector<u8> {
         field_to_be_bytes(t.current_root)
     }
-
     public fun next_index(t: &CommitmentTree): u64 { t.next_index }
-
     public fun is_full(t: &CommitmentTree): bool { t.next_index >= MAX_LEAVES }
-
+    public fun tree_number(t: &CommitmentTree): u32 { t.tree_number }
     public fun id(t: &CommitmentTree): address { object::uid_to_address(&t.id) }
-
-    /// The empty-tree root, ZERO[16].
+    /// Mint and share a fresh successor tree (tree_number + 1). Only permitted once the
+    /// current tree is full, so this cannot be used to spam trees while one has capacity.
+    /// Rebinding the pool to the new tree is a separate AdminCap-gated step
+    /// (`pool::rotate_commitment_tree`).
+    public fun create_successor(prev: &CommitmentTree, ctx: &mut TxContext) {
+        assert!(is_full(prev), errors::tree_not_full());
+        create(prev.tree_number + 1, ctx)
+    }
     public fun empty_root(): u256 { zero_hash(TREE_DEPTH) }
-
-    // ---------------------------------------------------------------------
-    // Field <-> bytes helpers (big-endian, matching circuit public-input encoding)
-    // ---------------------------------------------------------------------
-
-    /// 32 big-endian bytes -> u256, asserting length == 32 and value < r.
     public(package) fun field_from_be_bytes(b: &vector<u8>): u256 {
         let v = be_bytes_to_u256(b);
         assert!(v < BN254_FR, errors::commitment_out_of_field());
         v
     }
-
-    /// u256 -> 32 big-endian bytes (left zero-padded).
     public fun field_to_be_bytes(x: u256): vector<u8> {
         let mut out = vector[];
         let mut i = 0u64;
@@ -208,8 +139,6 @@ module utxopia::commitment_tree {
         };
         out
     }
-
-    /// Decode 32 big-endian bytes into a u256 without the field-range assertion.
     fun be_bytes_to_u256(b: &vector<u8>): u256 {
         assert!(vector::length(b) == 32, errors::invalid_commitment());
         let mut acc: u256 = 0;
@@ -220,10 +149,6 @@ module utxopia::commitment_tree {
         };
         acc
     }
-
-    /// ZERO[level] for level in 0..=16. ZERO[0] = 0 (empty leaf);
-    /// ZERO[i] = Poseidon(ZERO[i-1], ZERO[i-1]). Verbatim from
-    /// commitment_tree.rs / commitment-tree.ts; test U2 recomputes and asserts these.
     fun zero_hash(level: u64): u256 {
         if (level == 0) { 0x0000000000000000000000000000000000000000000000000000000000000000 }
         else if (level == 1) { 0x2098f5fb9e239eab3ceac3f27b81e481dc3124d55ffed523a839ee8446b64864 }
@@ -244,26 +169,20 @@ module utxopia::commitment_tree {
         else if (level == 16) { 0x2a7c7c9b6ce5880b9f6f228d72bf6a575a526f29c66ecceef8b753d38bba7323 }
         else { abort errors::invalid_commitment() }
     }
-
-    // ---------------------------------------------------------------------
-    // Test-only accessors
-    // ---------------------------------------------------------------------
-
     #[test_only]
     public fun test_hash_node(left: u256, right: u256): u256 { hash_node(left, right) }
-
     #[test_only]
     public fun test_zero_hash(level: u64): u256 { zero_hash(level) }
-
     #[test_only]
     public fun test_field_modulus(): u256 { BN254_FR }
-
     #[test_only]
     public fun test_new(ctx: &mut TxContext): CommitmentTree { new_tree(0, ctx) }
-
+    #[test_only]
+    public fun test_new_with_number(tree_number: u32, ctx: &mut TxContext): CommitmentTree {
+        new_tree(tree_number, ctx)
+    }
     #[test_only]
     public fun test_set_next_index(t: &mut CommitmentTree, n: u64) { t.next_index = n; }
-
     #[test_only]
     public fun test_destroy(t: CommitmentTree) {
         let CommitmentTree {

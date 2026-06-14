@@ -25,12 +25,21 @@ hand → guaranteed drift. Observed drift in this episode:
 
 ## Approach (incremental)
 
-### Phase 1 — generate, don't hand-edit (low risk)
-- Add a `scripts/export-web-config.ts` that reads `utxopia-sui-state.json` and emits the
-  `sui` + `bitcoin` (derived `poolAddress`) + `ika` blocks for a given network key, writing
-  into `web/src/lib/networks.json`. Run it as the last step of every deploy/init.
-- Net effect: the JSON still exists, but is **generated** — drift becomes impossible because
-  nobody edits it by hand. This alone would have prevented every bug above.
+### Phase 1 — generate, don't hand-edit (low risk) — DONE 2026-06-14
+- `scripts/export-web-config.ts` reads `utxopia-sui-state.json` and projects deployment
+  identity onto `web/src/lib/networks.json`: `packageId`, `eventsPackageId`, pool + all
+  companion object refs, `redemptionCap`, bound `ika.dWalletId`/`dWalletCapObjectId`, and vk
+  hashes — and **derives** `bitcoin.poolAddress` = `P2TR(bound dWallet x-only key)` via the
+  dependency-free encoder in `scripts/lib/bech32m.ts`. Endpoints (rpcUrl/explorerUrl/Ika
+  infra ids) are left untouched.
+- Pure mapping in `scripts/test-flow/web-config.ts`; covered by
+  `scripts/test/{bech32m,web-config}.test.ts`.
+- Commands: `bun run sync:web-config` (write), `bun run check:web-config` (CI/local guard,
+  exit 1 on drift). `init-light-client.ts` (the last deploy step) calls the sync
+  automatically (non-fatal if the web checkout is absent).
+- Net effect: the JSON is now **generated**, not hand-edited — the drift class is closed.
+- Caveat: `--check` compares against the gitignored deploy state, so it's a *local/pre-commit*
+  guard, not a hosted-CI check (CI has no deploy state). A hosted check needs Phase 2/3.
 
 ### Phase 2 — SDK owns the canonical config (medium)
 - Move the generated config into the SDK (`sdk/.../config` or `sdk-sui`) and have web import
@@ -52,5 +61,7 @@ config resolve. Pick based on redeploy cadence.
 ## Status
 
 - 2026-06-14: tactical patch applied to `networks.json` (`sui-testnet`/`sui-regtest` dWallet
-  → `0xe926ed3b…`, derived `poolAddress`es). This plan is the follow-up to retire the
-  hand-maintained file. Phases not yet started.
+  → `0xe926ed3b…`, derived `poolAddress`es).
+- 2026-06-14: **Phase 1 done** — `export-web-config.ts` + bech32m derivation + tests; web
+  config is now generated from deploy state. `bun run check:web-config` confirms the
+  committed `networks.json` matches the deploy state. Phases 2–3 not started.

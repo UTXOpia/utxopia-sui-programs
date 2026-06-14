@@ -115,11 +115,13 @@ Restarted the existing `utxopia-esplora-regtest` container (regtest tip 663) and
 - `pool.light_client_id` bound (bindDigest `4zZhWhMAUtiayPRxy5xSxqEzqn6AaBopeS96qEbEAwoZ`).
 - Verified on-chain: all six companions + `btc_pool_script` set, `paused = false`.
 
-### ⚠️ Remaining
+### Web config — DONE (now generated, not hand-edited)
 
-1. **Repoint `web/networks.json`** — deferred on purpose. Its `lightClient` (`0x9a897a46…`)
-   belongs to the old `0x91c4577d…` package, so a partial repoint would just create a new
-   hybrid. Repoint pool + all companions + `eventsPackageId` (→ `0x916737cd…`) + light client
-   **together** once step 1 exists. Also reconcile the **Ika dWallet divergence**: web uses
-   `dWalletId 0x7f0b719d…`, but the relayer state and the bound BTC pool script use
-   `0xe926ed3b…` / pubkey `32697b92…`; the `bitcoin.poolAddress` must match the bound P2TR.
+`web/networks.json` (`sui-testnet` + `sui-regtest`) was repointed to the `0x916737cd`
+deployment: pool + all companions + `eventsPackageId` + light client + the correct Ika
+dWallet (`0xe926ed3b…`, the one the pool's `btc_pool_script` is bound to; old `0x7f0b719d…`
+was stale) + derived `bitcoin.poolAddress`.
+
+This is no longer a manual step: **`bun run sync:web-config`** regenerates those blocks from
+the deploy state, and `init-light-client.ts` runs it automatically as the last deploy step.
+`bun run check:web-config` fails on drift. See `docs/config-centralization-plan.md`.

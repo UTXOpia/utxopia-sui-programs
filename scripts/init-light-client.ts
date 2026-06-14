@@ -2,8 +2,11 @@
 // Standalone BTC light-client bootstrap for the current deployment, anchored at the
 // local regtest tip (network byte 3). Mirrors regtest-flow.ts ensureLightClientInitialized,
 // then binds pool.light_client_id. Idempotent: skips if state.lightClient already set.
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { Transaction } from "@mysten/sui/transactions";
 import {
+  ROOT,
   readState,
   requireState,
   writeState,
@@ -13,6 +16,7 @@ import {
 } from "./shared";
 import { bitcoinCli } from "./lib/regtest-helpers";
 import { executeBuiltTransaction } from "./signing";
+import { syncWebConfig, defaultTargetKeys } from "./test-flow/web-config";
 
 const state = readState();
 const packageId = requireState(state.packageId, "packageId");
@@ -75,3 +79,25 @@ console.log(JSON.stringify({
   initDigest: initResult.digest,
   bindDigest: bindResult.digest,
 }, null, 2));
+
+// Final deploy step: regenerate the web config from the now-complete deploy state
+// so web never hand-defines deployment values (docs/config-centralization-plan.md).
+// Non-fatal: a missing web checkout just skips it.
+syncWebConfigFromState();
+
+function syncWebConfigFromState() {
+  const networksPath = process.env.UTXOPIA_WEB_NETWORKS
+    ?? path.join(ROOT, "../web/src/lib/networks.json");
+  if (!existsSync(networksPath)) {
+    console.log("web networks.json not found — skipped (run `bun run sync:web-config` later)");
+    return;
+  }
+  try {
+    const nets = JSON.parse(readFileSync(networksPath, "utf8"));
+    const { nets: out, synced } = syncWebConfig(nets, state, defaultTargetKeys(nets));
+    writeFileSync(networksPath, JSON.stringify(out, null, 2) + "\n");
+    console.log(`Synced web networks.json: ${synced.join(", ")}`);
+  } catch (e) {
+    console.log(`web config sync skipped (non-fatal): ${(e as Error).message}`);
+  }
+}

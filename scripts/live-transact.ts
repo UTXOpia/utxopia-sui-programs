@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
-import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
   BN254_FIELD_PRIME,
@@ -13,12 +10,11 @@ import {
   poseidonHashSync,
 } from "@utxopia/sdk";
 import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
-import { ROOT, readState, requireState, writeState } from "./shared";
+import { fieldToSuiBytes, hexToBytes, toHex } from "./lib/bytes";
+import { cleanupProof, exportSuiProof, generateProof, verifyProof } from "./test-flow/proof-artifacts";
+import { readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 
-const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
-  ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
-  : path.resolve(ROOT, "../utxopia-circuits");
 const TREE_DEPTH = 16;
 const ZKBTC_TOKEN_ID = 0x7a627463n;
 const CIRCUIT = "joinsplit_1x1";
@@ -48,7 +44,7 @@ const nullifier = poseidonHashSync([nullifyingKey, 0n]);
 const boundParamsHash = computeBoundParamsHash({
   treeNumber: 0,
   unshieldAddress: null,
-  chainId: BigInt(process.env.UTXOPIA_SUI_CHAIN_ID ?? "103"),
+  chainId: BigInt(process.env.UTXOPIA_SUI_CHAIN_ID ?? "784"),
   stealthDataHash: sha256(new Uint8Array()),
 });
 const msgHash = poseidonHashSync([merkle.root, boundParamsHash, nullifier, outputCommitment]);
@@ -73,7 +69,7 @@ const circuitInputs = {
 };
 
 console.log(`Generating ${CIRCUIT} Groth16 proof...`);
-const proofArtifacts = generateProof(CIRCUIT, circuitInputs);
+const proofArtifacts = generateProof(CIRCUIT, circuitInputs, { tmpPrefix: "transact" });
 console.log("Verifying generated proof with snarkjs...");
 verifyProof(CIRCUIT, proofArtifacts.proofPath, proofArtifacts.publicPath);
 console.log("Exporting proof to Sui native Groth16 bytes...");
@@ -164,129 +160,4 @@ function computeZeroHashes(): bigint[] {
 
 function randomFieldElement(): bigint {
   return bytesToBigint(randomBytes(32)) % BN254_FIELD_PRIME;
-}
-
-function generateProof(circuit: string, inputs: Record<string, unknown>) {
-  const circuitDir = path.join(CIRCUITS_DIR, "build", circuit);
-  const wasmPath = path.join(circuitDir, `${circuit}_js`, `${circuit}.wasm`);
-  const zkeyPath = path.join(circuitDir, `${circuit}.zkey`);
-  if (!existsSync(wasmPath)) {
-    throw new Error(`Missing circuit WASM: ${wasmPath}`);
-  }
-  if (!existsSync(zkeyPath)) {
-    throw new Error(`Missing circuit zkey: ${zkeyPath}`);
-  }
-
-  const tmpDir = path.join(ROOT, ".tmp", `transact-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  const inputPath = path.join(tmpDir, "input.json");
-  const proofPath = path.join(tmpDir, "proof.json");
-  const publicPath = path.join(tmpDir, "public.json");
-  const runnerPath = path.join(tmpDir, "prove.cjs");
-  writeFileSync(inputPath, JSON.stringify(inputs));
-  writeFileSync(runnerPath, `
-const fs = require("fs");
-const snarkjs = require("snarkjs");
-(async () => {
-  const input = JSON.parse(fs.readFileSync(${JSON.stringify(inputPath)}, "utf8"));
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    input,
-    ${JSON.stringify(wasmPath)},
-    ${JSON.stringify(zkeyPath)}
-  );
-  fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof));
-  fs.writeFileSync(${JSON.stringify(publicPath)}, JSON.stringify(publicSignals));
-  process.exit(0);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`);
-
-  execFileSync("node", [runnerPath], {
-    cwd: ROOT,
-    stdio: "inherit",
-    timeout: Number(process.env.UTXOPIA_SUI_PROVE_TIMEOUT_MS ?? "300000"),
-  });
-  return { tmpDir, proofPath, publicPath };
-}
-
-function verifyProof(circuit: string, proofPath: string, publicPath: string) {
-  const vkeyPath = path.join(CIRCUITS_DIR, "build", circuit, `${circuit}.vkey.json`);
-  const runnerPath = path.join(path.dirname(proofPath), "verify.cjs");
-  writeFileSync(runnerPath, `
-const fs = require("fs");
-const snarkjs = require("snarkjs");
-(async () => {
-  const vkey = JSON.parse(fs.readFileSync(${JSON.stringify(vkeyPath)}, "utf8"));
-  const proof = JSON.parse(fs.readFileSync(${JSON.stringify(proofPath)}, "utf8"));
-  const publicSignals = JSON.parse(fs.readFileSync(${JSON.stringify(publicPath)}, "utf8"));
-  const ok = await snarkjs.groth16.verify(vkey, publicSignals, proof);
-  if (!ok) throw new Error("snarkjs rejected generated proof");
-  process.exit(0);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`);
-  execFileSync("node", [runnerPath], {
-    cwd: ROOT,
-    stdio: "inherit",
-    timeout: Number(process.env.UTXOPIA_SUI_PROVE_TIMEOUT_MS ?? "300000"),
-  });
-}
-
-function exportSuiProof(proofPath: string, publicPath: string): {
-  proofPoints: string;
-  publicInputs: string;
-} {
-  const result = spawnSync("cargo", [
-    "run",
-    "--quiet",
-    "--manifest-path",
-    path.join(ROOT, "../utxopia-circuits/sui-groth16-exporter/Cargo.toml"),
-    "--",
-    "proof",
-    "--proof",
-    proofPath,
-    "--public",
-    publicPath,
-  ], {
-    cwd: ROOT,
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout);
-  }
-  return JSON.parse(result.stdout);
-}
-
-function fieldToSuiBytes(value: bigint): Uint8Array {
-  const bytes = new Uint8Array(32);
-  let n = value;
-  for (let i = 0; i < 32; i += 1) {
-    bytes[i] = Number(n & 0xffn);
-    n >>= 8n;
-  }
-  return bytes;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
-  const bytes = new Uint8Array(clean.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(clean.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
-function toHex(bytes: Uint8Array): string {
-  return Array.from(bytes).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function cleanupProof(tmpDir: string) {
-  if (process.env.UTXOPIA_SUI_KEEP_PROOF_TMP === "1") {
-    return;
-  }
-  rmSync(tmpDir, { recursive: true, force: true });
 }

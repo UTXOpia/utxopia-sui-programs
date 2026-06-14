@@ -1,8 +1,5 @@
 #!/usr/bin/env bun
-import { execFileSync, spawnSync } from "node:child_process";
-import { randomBytes, createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
@@ -30,15 +27,23 @@ import {
   fetchMerkleProof,
   stripWitnessData,
 } from "./lib/regtest-helpers";
+import {
+  concatBytes,
+  fieldToSuiBytes,
+  hexToBytes,
+  reverseHexToBytes,
+  to0xHex as toHex,
+} from "./lib/bytes";
+import { assertSuiSuccess } from "./lib/sui-tx";
 import { Transaction } from "@mysten/sui/transactions";
-import { ROOT, readState, requireState, writeState, findCreatedObject, objectRefFromChange, sharedRefFromChange } from "./shared";
+import { readState, requireState, writeState, findCreatedObject, objectRefFromChange, sharedRefFromChange } from "./shared";
+import { cleanupProof, exportSuiProof, generateProof, verifyProof } from "./test-flow/proof-artifacts";
+import { loadRegtestConfig } from "./test-flow/regtest-config";
 import { executeTransactionKind, executeBuiltTransaction } from "./signing";
 import { loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
 
-const CIRCUITS_DIR = process.env.UTXOPIA_CIRCUITS_DIR
-  ? path.resolve(process.env.UTXOPIA_CIRCUITS_DIR)
-  : path.resolve(ROOT, "../utxopia-circuits");
-const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
+const REGTEST_CONFIG = loadRegtestConfig();
+const ESPLORA_URL = process.env.ESPLORA_URL ?? REGTEST_CONFIG.esploraUrl;
 const TREE_DEPTH = 16;
 const ZKBTC_TOKEN_ID = 0x7a627463n;
 const CIRCUIT = "joinsplit_1x1";
@@ -68,9 +73,10 @@ if (withdrawalSignerMode !== "relayer" && withdrawalSignerMode !== "ika") {
 }
 const ikaSigningConfig = withdrawalSignerMode === "ika" ? requireIkaSuiSigningConfig() : null;
 
-lightClient = await ensureLightClientInitialized();
+let adapter: UTXOpiaSuiAdapter;
+let regtestPoolBtcAddress = process.env.UTXOPIA_SUI_REGTEST_POOL_BTC_ADDRESS ?? (state as any).regtestPoolBtcAddress;
 
-let adapter = createAdapter(redemptionCap);
+await runRegtestFlow();
 
 function createAdapter(cap: typeof redemptionCap) {
   return new UTXOpiaSuiAdapter({
@@ -105,90 +111,93 @@ async function refreshCapAdapter() {
   adapter = createAdapter({ objectId: redemptionCap.objectId, version: o.data!.version, digest: o.data!.digest } as typeof redemptionCap);
 }
 
-await waitForEsplora(ESPLORA_URL, 30_000);
+async function runRegtestFlow() {
+  lightClient = await ensureLightClientInitialized();
+  adapter = createAdapter(redemptionCap);
 
-const note = await buildJoinSplitNote(amount);
-const deposit = await createDirectDeposit(note.inputNpk, amount);
+  await waitForEsplora(ESPLORA_URL, 30_000);
 
-console.log("Submitting Sui SPV BTC deposit completion...");
-const depositProof = await fetchMerkleProof(deposit.depositTxid, ESPLORA_URL);
-const depositBlockHash = btc(`getblockhash ${depositProof.block_height}`);
-await submitHeadersThrough(depositProof.block_height);
-const shieldTx = await adapter.buildBtcDepositTransaction({
-  blockHash: reverseHexToBytes(depositBlockHash),
-  sweepTxid: reverseHexToBytes(deposit.depositTxid),
-  txIndex: depositProof.pos,
-  merkleSiblings: depositProof.merkle.map(reverseHexToBytes),
-  pathBits: BigInt(depositProof.pos),
-  sweepRawTx: deposit.rawTx,
-  directToPool: true,
-});
-const shieldResult = await executeTransactionKind(shieldTx.bytes);
-assertSuiSuccess("shield", shieldResult);
+  const note = await buildJoinSplitNote(amount);
+  const deposit = await createDirectDeposit(note.inputNpk, amount);
 
-// Frontier AFTER the deposit / BEFORE the transfer = the path for the transfer's output note
-// (which the redeem will later spend). Captured here so the redeem doesn't depend on events.
-const redeemFrontier = await readTreeFrontier();
+  console.log("Submitting Sui SPV BTC deposit completion...");
+  const depositProof = await fetchMerkleProof(deposit.depositTxid, ESPLORA_URL);
+  const depositBlockHash = btc(`getblockhash ${depositProof.block_height}`);
+  await submitHeadersThrough(depositProof.block_height);
+  const shieldTx = await adapter.buildBtcDepositTransaction({
+    blockHash: reverseHexToBytes(depositBlockHash),
+    sweepTxid: reverseHexToBytes(deposit.depositTxid),
+    txIndex: depositProof.pos,
+    merkleSiblings: depositProof.merkle.map(reverseHexToBytes),
+    pathBits: BigInt(depositProof.pos),
+    sweepRawTx: deposit.rawTx,
+    directToPool: true,
+  });
+  const shieldResult = await executeTransactionKind(shieldTx.bytes);
+  assertSuiSuccess("shield", shieldResult);
 
-console.log("Submitting Sui private transfer proof...");
-const transactTx = await adapter.buildTransactTransaction({
-  inputNotes: [{
-    commitment: toHex(fieldToSuiBytes(note.inputCommitment)),
-    nullifier: toHex(note.nullifierBytes),
-    tokenId: "zkbtc",
-    leafIndex: 0,
-  }],
-  outputs: [{
-    recipient: "sui-regtest",
-    tokenId: "zkbtc",
-    amount,
-  }],
-  proof: note.proofPoints,
-  boundParamsHash: toHex(fieldToSuiBytes(note.boundParamsHash)),
-  vkHash: hexToBytes(vk.vkHash),
-  publicInputs: note.publicInputs,
-  proofPoints: note.proofPoints,
-  commitmentsOut: [note.commitmentOutBytes],
-  stealthData: [note.stealthBlob],
-});
-const transactResult = await executeTransactionKind(transactTx.bytes);
-assertSuiSuccess("transact", transactResult);
+  const redeemFrontier = await readTreeFrontier();
 
-if (process.env.UTXOPIA_SUI_DO_REDEEM === "1") {
-  await runRedeemAndWithdraw(note, deposit, redeemFrontier);
-}
+  console.log("Submitting Sui private transfer proof...");
+  const transactTx = await adapter.buildTransactTransaction({
+    inputNotes: [{
+      commitment: toHex(fieldToSuiBytes(note.inputCommitment)),
+      nullifier: toHex(note.nullifierBytes),
+      tokenId: "zkbtc",
+      leafIndex: 0,
+    }],
+    outputs: [{
+      recipient: "sui-regtest",
+      tokenId: "zkbtc",
+      amount,
+    }],
+    proof: note.proofPoints,
+    boundParamsHash: toHex(fieldToSuiBytes(note.boundParamsHash)),
+    vkHash: hexToBytes(vk.vkHash),
+    publicInputs: note.publicInputs,
+    proofPoints: note.proofPoints,
+    commitmentsOut: [note.commitmentOutBytes],
+    stealthData: [note.stealthBlob],
+  });
+  const transactResult = await executeTransactionKind(transactTx.bytes);
+  assertSuiSuccess("transact", transactResult);
 
-(state as any).lastSuiRegtestFlow = {
-  amountSats: amount.toString(),
-  depositTxid: deposit.depositTxid,
-  shieldTxDigest: shieldResult.digest,
-  transactTxDigest: transactResult.digest,
-  status: "deposit_and_transact_complete",
-  redeemStatus: "disabled_until_real_redeem_proof_fixture",
-};
-writeState(state);
+  if (process.env.UTXOPIA_SUI_DO_REDEEM === "1") {
+    await runRedeemAndWithdraw(note, deposit, redeemFrontier);
+  }
 
-console.log(JSON.stringify({
-  amountSats: amount.toString(),
-  btc: {
+  (state as any).lastSuiRegtestFlow = {
+    amountSats: amount.toString(),
     depositTxid: deposit.depositTxid,
-    depositVout: deposit.depositVout,
-    depositAmountSats: deposit.amountSats.toString(),
-    poolAddress: deposit.poolAddress,
-  },
-  sui: {
     shieldTxDigest: shieldResult.digest,
-    shieldStatus: shieldResult.effects?.status,
     transactTxDigest: transactResult.digest,
-    transactStatus: transactResult.effects?.status,
-  },
-  limitations: [
-    "Sui BTC deposit completion is SPV-checked in one PTB: btc_light_client::verify_tx_inclusion feeds btc_deposit::complete_deposit.",
-    "BTC redemption is intentionally not run here until this script builds a second proof-checked redeem fixture for the output note.",
-  ],
-}, null, 2));
+    status: "deposit_and_transact_complete",
+    redeemStatus: "disabled_until_real_redeem_proof_fixture",
+  };
+  writeState(state);
 
-cleanupProof(note.tmpDir);
+  console.log(JSON.stringify({
+    amountSats: amount.toString(),
+    btc: {
+      depositTxid: deposit.depositTxid,
+      depositVout: deposit.depositVout,
+      depositAmountSats: deposit.amountSats.toString(),
+      poolAddress: deposit.poolAddress,
+    },
+    sui: {
+      shieldTxDigest: shieldResult.digest,
+      shieldStatus: shieldResult.effects?.status,
+      transactTxDigest: transactResult.digest,
+      transactStatus: transactResult.effects?.status,
+    },
+    limitations: [
+      "Sui BTC deposit completion is SPV-checked in one PTB: btc_light_client::verify_tx_inclusion feeds btc_deposit::complete_deposit.",
+      "BTC redemption is intentionally not run here until this script builds a second proof-checked redeem fixture for the output note.",
+    ],
+  }, null, 2));
+
+  cleanupProof(note.tmpDir);
+}
 
 async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
   console.log("Creating direct regtest BTC deposit to pool with compact OP_RETURN...");
@@ -198,7 +207,7 @@ async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
   const npkBeBytes = Uint8Array.from(Buffer.from(fieldToSuiBytes(inputNpk)).reverse());
   const opReturnPayload = buildSuiDepositOpReturnPayload(ephPub, npkBeBytes);
   const payloadHex = Buffer.from(opReturnPayload).toString("hex");
-  const poolAddress = process.env.UTXOPIA_SUI_REGTEST_POOL_BTC_ADDRESS ?? getNewAddress("bech32m");
+  const poolAddress = getRegtestPoolBtcAddress();
   const depositTxid = createOpReturnTx(poolAddress, Number(depositAmount), payloadHex);
   const minerAddress = getNewAddress("bech32m");
   mineBlocks(6, minerAddress);
@@ -244,16 +253,6 @@ function suiAddressToBytes(value: string): Uint8Array {
     throw new Error(`invalid Sui address: ${value}`);
   }
   return hexToBytes(hex.padStart(64, "0"));
-}
-
-function concatBytes(parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
 }
 
 async function broadcastWithdrawal(depositTxid: string, depositVout: number, inputAmountSats: bigint, sendAmountSats: bigint) {
@@ -312,7 +311,7 @@ async function buildJoinSplitNote(noteAmount: bigint) {
   const boundParamsHash = computeBoundParamsHash({
     treeNumber: 0,
     unshieldAddress: null,
-    chainId: BigInt(process.env.UTXOPIA_SUI_CHAIN_ID ?? "103"),
+    chainId: BigInt(process.env.UTXOPIA_SUI_CHAIN_ID ?? "784"),
     stealthDataHash: sha256(stealthBlob),
   });
   const msgHash = poseidonHashSync([merkle.root, boundParamsHash, nullifier, outputCommitment]);
@@ -336,7 +335,7 @@ async function buildJoinSplitNote(noteAmount: bigint) {
   };
 
   console.log(`Generating ${CIRCUIT} Groth16 proof...`);
-  const proofArtifacts = generateProof(CIRCUIT, circuitInputs);
+  const proofArtifacts = generateProof(CIRCUIT, circuitInputs, { tmpPrefix: "regtest-flow" });
   console.log("Verifying generated proof with snarkjs...");
   verifyProof(CIRCUIT, proofArtifacts.proofPath, proofArtifacts.publicPath);
   console.log("Exporting proof to Sui native Groth16 bytes...");
@@ -449,135 +448,6 @@ function randomFieldElement(): bigint {
   return bytesToBigint(randomBytes(32)) % BN254_FIELD_PRIME;
 }
 
-function generateProof(circuit: string, inputs: Record<string, unknown>) {
-  const circuitDir = path.join(CIRCUITS_DIR, "build", circuit);
-  const wasmPath = path.join(circuitDir, `${circuit}_js`, `${circuit}.wasm`);
-  const zkeyPath = path.join(circuitDir, `${circuit}.zkey`);
-  if (!existsSync(wasmPath)) {
-    throw new Error(`Missing circuit WASM: ${wasmPath}`);
-  }
-  if (!existsSync(zkeyPath)) {
-    throw new Error(`Missing circuit zkey: ${zkeyPath}`);
-  }
-
-  const tmpDir = path.join(ROOT, ".tmp", `regtest-flow-${Date.now()}`);
-  mkdirSync(tmpDir, { recursive: true });
-  const inputPath = path.join(tmpDir, "input.json");
-  const proofPath = path.join(tmpDir, "proof.json");
-  const publicPath = path.join(tmpDir, "public.json");
-  const runnerPath = path.join(tmpDir, "prove.cjs");
-  writeFileSync(inputPath, JSON.stringify(inputs));
-  writeFileSync(runnerPath, `
-const fs = require("fs");
-const snarkjs = require("snarkjs");
-(async () => {
-  const input = JSON.parse(fs.readFileSync(${JSON.stringify(inputPath)}, "utf8"));
-  const { proof, publicSignals } = await snarkjs.groth16.fullProve(
-    input,
-    ${JSON.stringify(wasmPath)},
-    ${JSON.stringify(zkeyPath)}
-  );
-  fs.writeFileSync(${JSON.stringify(proofPath)}, JSON.stringify(proof));
-  fs.writeFileSync(${JSON.stringify(publicPath)}, JSON.stringify(publicSignals));
-  process.exit(0);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`);
-
-  execFileSync("node", [runnerPath], {
-    cwd: ROOT,
-    stdio: "inherit",
-    timeout: Number(process.env.UTXOPIA_SUI_PROVE_TIMEOUT_MS ?? "300000"),
-  });
-  return { tmpDir, proofPath, publicPath };
-}
-
-function verifyProof(circuit: string, proofPath: string, publicPath: string) {
-  const vkeyPath = path.join(CIRCUITS_DIR, "build", circuit, `${circuit}.vkey.json`);
-  const runnerPath = path.join(path.dirname(proofPath), "verify.cjs");
-  writeFileSync(runnerPath, `
-const fs = require("fs");
-const snarkjs = require("snarkjs");
-(async () => {
-  const vkey = JSON.parse(fs.readFileSync(${JSON.stringify(vkeyPath)}, "utf8"));
-  const proof = JSON.parse(fs.readFileSync(${JSON.stringify(proofPath)}, "utf8"));
-  const publicSignals = JSON.parse(fs.readFileSync(${JSON.stringify(publicPath)}, "utf8"));
-  const ok = await snarkjs.groth16.verify(vkey, publicSignals, proof);
-  if (!ok) throw new Error("snarkjs rejected generated proof");
-  process.exit(0);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`);
-  execFileSync("node", [runnerPath], {
-    cwd: ROOT,
-    stdio: "inherit",
-    timeout: Number(process.env.UTXOPIA_SUI_PROVE_TIMEOUT_MS ?? "300000"),
-  });
-}
-
-function exportSuiProof(proofPath: string, publicPath: string): {
-  proofPoints: string;
-  publicInputs: string;
-} {
-  const result = spawnSync("cargo", [
-    "run",
-    "--quiet",
-    "--manifest-path",
-    path.join(ROOT, "../utxopia-circuits/sui-groth16-exporter/Cargo.toml"),
-    "--",
-    "proof",
-    "--proof",
-    proofPath,
-    "--public",
-    publicPath,
-  ], {
-    cwd: ROOT,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: Number(process.env.UTXOPIA_SUI_EXPORT_TIMEOUT_MS ?? "300000"),
-  });
-  if (result.status !== 0) {
-    throw new Error(result.stderr || result.stdout || "Failed to export Sui Groth16 proof");
-  }
-
-  const parsed = JSON.parse(result.stdout.trim()) as { proofPoints: string; publicInputs: string };
-  return parsed;
-}
-
-function cleanupProof(tmpDir: string) {
-  if (process.env.UTXOPIA_SUI_KEEP_PROOF_TMP === "1") {
-    return;
-  }
-  rmSync(tmpDir, { recursive: true, force: true });
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const normalized = hex.startsWith("0x") ? hex.slice(2) : hex;
-  return Uint8Array.from(Buffer.from(normalized, "hex"));
-}
-
-function fieldToSuiBytes(value: bigint): Uint8Array {
-  const bytes = Buffer.alloc(32);
-  let n = value;
-  for (let i = 0; i < 32; i += 1) {
-    bytes[i] = Number(n & 0xffn);
-    n >>= 8n;
-  }
-  return bytes;
-}
-
-function toHex(bytes: Uint8Array | Buffer): string {
-  return `0x${Buffer.from(bytes).toString("hex")}`;
-}
-
-function reverseHexToBytes(hex: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(hex, "hex").reverse());
-}
-
 function findEventField(events: any[] | undefined, typeSuffix: string, field: string): string | undefined {
   const event = events?.find((candidate) => typeof candidate.type === "string" && candidate.type.endsWith(typeSuffix));
   const value = event?.parsedJson?.[field];
@@ -586,13 +456,6 @@ function findEventField(events: any[] | undefined, typeSuffix: string, field: st
 
 function btc(cmd: string): string {
   return bitcoinCli(cmd);
-}
-
-function assertSuiSuccess(label: string, result: any) {
-  const status = result.effects?.status;
-  if (status?.status !== "success") {
-    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
-  }
 }
 
 interface IkaSuiSigningConfig {
@@ -746,6 +609,7 @@ async function refreshObjectRef(objectId: string) {
 // --- Light-client bootstrap (added so the flow is self-sufficient on a fresh deploy) ---
 async function ensureLightClientInitialized() {
   if (state.lightClient) {
+    await assertLightClientMatchesRegtest();
     await ensurePoolLightClientBound();
     return state.lightClient;
   }
@@ -779,29 +643,88 @@ async function ensureLightClientInitialized() {
   return state.lightClient!;
 }
 
+async function assertLightClientMatchesRegtest() {
+  const c = new SuiJsonRpcClient({ url: SUI_RPC_URL, network: "testnet" });
+  const obj = await c.getObject({ id: state.lightClient!.objectId, options: { showContent: true } });
+  const fields = (obj.data?.content as any)?.fields;
+  const tipHeight = Number(fields?.tip_height ?? fields?.tipHeight ?? 0);
+  const tipHashBytes = fields?.tip_hash ?? fields?.tipHash;
+  if (!Number.isInteger(tipHeight) || !Array.isArray(tipHashBytes)) {
+    throw new Error(`Could not read Sui BTC light-client tip for ${state.lightClient!.objectId}`);
+  }
+  const regtestHeight = Number(bitcoinCli("getblockcount").trim());
+  if (tipHeight > regtestHeight) {
+    throw new Error(
+      `Sui light client tip height ${tipHeight} is ahead of regtest height ${regtestHeight}. ` +
+      "Use matching state/regtest data or redeploy/reinitialize before running the flow.",
+    );
+  }
+  const regtestHash = bitcoinCli(`getblockhash ${tipHeight}`).trim();
+  const actual = toHex(Uint8Array.from(tipHashBytes));
+  const expected = toHex(reverseHexToBytes(regtestHash));
+  if (actual !== expected) {
+    throw new Error(
+      [
+        "Sui light client does not match the running Bitcoin regtest chain.",
+        `  lightClient=${state.lightClient!.objectId}`,
+        `  height=${tipHeight}`,
+        `  suiTip=${actual}`,
+        `  regtestTip=${expected}`,
+        "Start the matching regtest service, or clear/redeploy the Sui state before running the flow.",
+      ].join("\n"),
+    );
+  }
+}
+
 async function ensurePoolLightClientBound() {
   const adminCap = requireState(state.adminCap, "adminCap");
   const c = new SuiJsonRpcClient({ url: SUI_RPC_URL, network: "testnet" });
   const obj = await c.getObject({ id: pool.objectId, options: { showContent: true } });
-  const bound = (obj.data?.content as any)?.fields?.light_client_id;
-  if (bound) return;
-  console.log("Binding pool.light_client_id to the light client...");
+  const fields = (obj.data?.content as any)?.fields ?? {};
   const tx = new Transaction();
-  tx.moveCall({
-    target: `${packageId}::pool::set_light_client_id`,
-    arguments: [
-      tx.object(adminCap.objectId),
-      tx.sharedObjectRef({ objectId: pool.objectId, initialSharedVersion: pool.initialSharedVersion, mutable: true }),
-      tx.pure.address(state.lightClient!.objectId),
-    ],
-  });
+  let changed = false;
+  if (!fields.light_client_id) {
+    console.log("Binding pool.light_client_id to the light client...");
+    tx.moveCall({
+      target: `${packageId}::pool::set_light_client_id`,
+      arguments: [
+        tx.object(adminCap.objectId),
+        tx.sharedObjectRef({ objectId: pool.objectId, initialSharedVersion: pool.initialSharedVersion, mutable: true }),
+        tx.pure.address(state.lightClient!.objectId),
+      ],
+    });
+    changed = true;
+  }
+  if (!fields.btc_pool_script) {
+    console.log("Binding pool.btc_pool_script to the regtest BTC pool address...");
+    tx.moveCall({
+      target: `${packageId}::pool::set_btc_pool_script`,
+      arguments: [
+        tx.object(adminCap.objectId),
+        tx.sharedObjectRef({ objectId: pool.objectId, initialSharedVersion: pool.initialSharedVersion, mutable: true }),
+        tx.pure.vector("u8", addressToScriptPubKey(getRegtestPoolBtcAddress())),
+      ],
+    });
+    changed = true;
+  }
+  if (!changed) return;
   const result = await executeBuiltTransaction(tx);
   if (result.effects?.status?.status !== "success") {
-    throw new Error(`set_light_client_id failed: ${JSON.stringify(result.effects?.status)}`);
+    throw new Error(`pool BTC binding failed: ${JSON.stringify(result.effects?.status)}`);
   }
   const adminChange = (result.objectChanges ?? []).find((ch: any) => ch.objectId === adminCap.objectId && (ch.type === "mutated" || ch.type === "created"));
   state.adminCap = objectRefFromChange(adminChange) ?? state.adminCap;
   writeState(state);
+}
+
+function getRegtestPoolBtcAddress(): string {
+  if (!regtestPoolBtcAddress) {
+    regtestPoolBtcAddress = getNewAddress("bech32m");
+    (state as any).regtestPoolBtcAddress = regtestPoolBtcAddress;
+    writeState(state);
+    console.log(`Using generated regtest BTC pool address: ${regtestPoolBtcAddress}`);
+  }
+  return regtestPoolBtcAddress;
 }
 
 async function lcTipHeight(): Promise<number> {
@@ -911,7 +834,7 @@ async function runRedeemAndWithdraw(note: any, deposit: any, redeemFrontier: { n
     valueOut: [changeNoteSats.toString(), redeemBtcSats.toString()],
   };
   console.log(`Generating ${"joinsplit_1x2"} redeem proof (redeem ${redeemBtcSats} sats, change note ${changeNoteSats})...`);
-  const artifacts = generateProof("joinsplit_1x2", inputs);
+  const artifacts = generateProof("joinsplit_1x2", inputs, { tmpPrefix: "regtest-flow" });
   verifyProof("joinsplit_1x2", artifacts.proofPath, artifacts.publicPath);
   const exported = exportSuiProof(artifacts.proofPath, artifacts.publicPath);
   const pub = hexToBytes(exported.publicInputs);

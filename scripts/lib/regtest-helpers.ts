@@ -7,28 +7,36 @@
  */
 
 import { execSync, spawnSync } from "child_process";
+import { existsSync } from "node:fs";
 import * as path from "path";
-import { fileURLToPath } from "url";
+import { ROOT } from "../shared";
+import { loadRegtestConfig, resolveComposeFile } from "../test-flow/regtest-config";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, "../..");
-const COMPOSE_FILE = path.join(PROJECT_ROOT, "docker-compose.regtest.yml");
-const CONTAINER_NAME = "utxopia-esplora-regtest";
-
-const DEFAULT_ESPLORA_URL = "http://localhost:3002/regtest/api";
+const config = loadRegtestConfig();
+const COMPOSE_FILE = resolveComposeFile(config);
+const CONTAINER_NAME = config.docker.containerName;
+const DEFAULT_ESPLORA_URL = config.esploraUrl;
 
 // bitcoin-cli path inside the blockstream/esplora container
-let bitcoinCliPath = "/srv/explorer/bitcoin/bin/bitcoin-cli";
+let bitcoinCliPath = config.bitcoin.cliPath;
 
 // =============================================================================
 // Docker lifecycle
 // =============================================================================
 
 export function startRegtestDocker(): void {
+  if (!existsSync(COMPOSE_FILE)) {
+    throw new Error(
+      [
+        `Regtest compose file not found: ${COMPOSE_FILE}`,
+        "If your regtest is already running, use `bun run test:regtest:existing`.",
+        "Otherwise set docker.composeFile in config/regtest.yaml or UTXOPIA_REGTEST_COMPOSE_FILE.",
+      ].join("\n"),
+    );
+  }
   console.log("  Starting regtest Docker (blockstream/esplora)...");
   execSync(`docker compose -f ${COMPOSE_FILE} up -d`, {
-    cwd: PROJECT_ROOT,
+    cwd: ROOT,
     stdio: "inherit",
   });
 }
@@ -36,7 +44,7 @@ export function startRegtestDocker(): void {
 export function stopRegtestDocker(): void {
   console.log("  Stopping regtest Docker...");
   execSync(`docker compose -f ${COMPOSE_FILE} down`, {
-    cwd: PROJECT_ROOT,
+    cwd: ROOT,
     stdio: "inherit",
   });
 }
@@ -84,7 +92,7 @@ function detectBitcoinCliPath(): void {
 }
 
 export function bitcoinCli(args: string): string {
-  const cmd = `docker exec ${CONTAINER_NAME} ${bitcoinCliPath} -regtest -datadir=/data/bitcoin -rpcwallet=test ${args}`;
+  const cmd = `docker exec ${CONTAINER_NAME} ${bitcoinCliPath} -regtest -datadir=${config.bitcoin.dataDir} -rpcwallet=${config.bitcoin.wallet} ${args}`;
   const result = execSync(cmd, { encoding: "utf-8", timeout: 30_000, maxBuffer: 50 * 1024 * 1024 });
   return result.trim();
 }
@@ -95,17 +103,17 @@ export function bitcoinCli(args: string): string {
 
 export function createWallet(): void {
   try {
-    bitcoinCli("createwallet test");
-    console.log("  Created regtest wallet 'test'");
+    bitcoinCli(`createwallet ${config.bitcoin.wallet}`);
+    console.log(`  Created regtest wallet '${config.bitcoin.wallet}'`);
   } catch (err: any) {
     if (err.message?.includes("already exists")) {
       // Try loading it instead
       try {
-        bitcoinCli("loadwallet test");
+        bitcoinCli(`loadwallet ${config.bitcoin.wallet}`);
       } catch {
         // Already loaded
       }
-      console.log("  Wallet 'test' already exists");
+      console.log(`  Wallet '${config.bitcoin.wallet}' already exists`);
     } else {
       throw err;
     }
@@ -416,19 +424,32 @@ export async function setupRegtest(): Promise<{
   tipHeight: number;
   tipHash: string;
 }> {
-  startRegtestDocker();
-  await waitForEsplora();
+  return prepareRegtestEnvironment({ startDocker: true });
+}
+
+export async function prepareRegtestEnvironment(options: { startDocker: boolean }): Promise<{
+  tipHeight: number;
+  tipHash: string;
+}> {
+  if (options.startDocker) {
+    startRegtestDocker();
+  }
+  await waitForEsplora(DEFAULT_ESPLORA_URL, config.setup.waitTimeoutMs);
   detectBitcoinCliPath();
   createWallet();
 
-  console.log("  Mining 101 blocks for coinbase maturity...");
-  mineBlocks(101);
+  const currentHeight = await fetchTipHeight(DEFAULT_ESPLORA_URL);
+  if (currentHeight < config.setup.mineMaturityBlocks) {
+    const missing = config.setup.mineMaturityBlocks - currentHeight;
+    console.log(`  Mining ${missing} blocks for coinbase maturity...`);
+    mineBlocks(missing);
+  }
 
   // Wait for Esplora to index
   await new Promise((r) => setTimeout(r, 5000));
 
-  const tipHeight = await fetchTipHeight();
-  const tipHash = await fetchTipHash();
+  const tipHeight = await fetchTipHeight(DEFAULT_ESPLORA_URL);
+  const tipHash = await fetchTipHash(DEFAULT_ESPLORA_URL);
   console.log(`  Regtest tip: height=${tipHeight}, hash=${tipHash.slice(0, 16)}...`);
 
   return { tipHeight, tipHash };

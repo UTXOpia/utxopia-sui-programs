@@ -1,0 +1,40 @@
+# UTXOpia local Bitcoin regtest wiring.
+#
+# Defaults match the historical script assumptions. Override values here or with
+# env vars when your regtest service is already running elsewhere.
+
+esploraUrl: http://localhost:3002/regtest/api
+
+circuits:
+  # Current Move verifier cap: 2 public fields + n inputs + m outputs <= 8.
+  # Keep only circuits with n + m <= 6 unless verifier.move is raised.
+  joinSplitVariants:
+    - joinsplit_1x1
+    - joinsplit_1x2
+    - joinsplit_1x3
+    - joinsplit_1x4
+    - joinsplit_1x5
+    - joinsplit_2x1
+    - joinsplit_2x2
+    - joinsplit_2x3
+    - joinsplit_2x4
+    - joinsplit_3x1
+    - joinsplit_3x2
+    - joinsplit_3x3
+    - joinsplit_4x1
+    - joinsplit_4x2
+    - joinsplit_5x1
+
+docker:
+  composeFile: docker-compose.regtest.yml
+  containerName: utxopia-esplora-regtest
+
+bitcoin:
+  cliPath: /srv/explorer/bitcoin/bin/bitcoin-cli
+  dataDir: /data/bitcoin
+  wallet: test
+
+setup:
+  mineMaturityBlocks: 101
+  waitTimeoutMs: 120000
+  stopAfterRun: false

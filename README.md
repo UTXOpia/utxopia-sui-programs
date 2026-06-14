@@ -24,13 +24,26 @@ sui move test
 ```text
 .
 |-- contracts/
-|   |-- sources/             # Move modules
+|   |-- sources/
+|   |   |-- entry/           # Public protocol modules and shared objects
+|   |   `-- lib/             # Pure helpers, errors, and event emitters
 |   `-- tests/               # Move unit tests
+|-- config/                  # Local flow configuration
 |-- indexer/                 # Sui event indexer and projections
 |-- scripts/                 # Deploy, init, live flows, Ika helpers
+|   |-- lib/                 # Reusable script utilities
+|   |-- test/                # Bun unit tests for script helpers
+|   `-- test-flow/           # Regtest-specific flow helpers
 |-- docs/production/         # Production hardening notes
 `-- poseidon-parity/         # Poseidon parity package
 ```
+
+## Move Source Map
+
+| Folder | Modules | Role |
+|--------|---------|------|
+| `contracts/sources/entry` | `pool`, `commitment_tree`, `nullifier`, `btc_light_client`, `btc_deposit`, `transact`, `redemption`, `token_registry`, `verifier`, `ika_policy` | Public protocol modules, shared objects, user/admin/relayer calls, and views. |
+| `contracts/sources/lib` | `bitcoin`, `bound_params`, `public_inputs`, `errors`, `events` | Pure parsing/hash helpers, proof-input binding helpers, error codes, and event emitters. |
 
 ## Lifecycle
 

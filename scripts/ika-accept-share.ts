@@ -3,6 +3,7 @@ import { Curve, IkaTransaction } from "@ika.xyz/sdk";
 import { Transaction } from "@mysten/sui/transactions";
 import { readState, writeState } from "./shared";
 import { hexToBytes, loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
+import { assertSuiSuccess } from "./lib/sui-tx";
 import { executeBuiltTransaction } from "./signing";
 import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 
@@ -75,13 +76,6 @@ function getAwaitingPublicOutput(dWallet: any): Uint8Array {
     return Uint8Array.from(Buffer.from(publicOutput, "base64"));
   }
   throw new Error(`dWallet ${dWallet?.id ?? ""} is not awaiting key-holder signature`);
-}
-
-function assertSuiSuccess(label: string, result: any) {
-  const status = result.effects?.status;
-  if (status?.status !== "success") {
-    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
-  }
 }
 
 function required(name: string, value?: string): string {

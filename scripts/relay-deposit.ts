@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { createHash } from "node:crypto";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import {
@@ -8,6 +7,24 @@ import {
   initPoseidon,
 } from "@utxopia/sdk";
 import { bitcoinCli, stripWitnessData, waitForEsplora, waitForTxIndexed } from "./lib/regtest-helpers";
+import {
+  bytesToBigintBE,
+  bytesToBigintLE,
+  concatBytes,
+  fieldToSuiBytes,
+  reverseHexToBytes,
+  toHex,
+} from "./lib/bytes";
+import { assertSuiSuccess, shared } from "./lib/sui-tx";
+import {
+  assertBitcoinMerkleRoot,
+  assertBitcoinTxidMatches,
+  buildBitcoinMerkleProof,
+  findTxIndex,
+} from "./test-flow/bitcoin-merkle";
+import { parseRelayArgs, type RelayArgs } from "./test-flow/relay-args";
+import { bigintField, bytesField, numberField } from "./test-flow/sui-event-fields";
+import { loadRegtestConfig } from "./test-flow/regtest-config";
 import {
   findCreatedObject,
   objectRefFromChange,
@@ -18,20 +35,13 @@ import {
 } from "./shared";
 import { executeBuiltTransaction } from "./signing";
 
-const ESPLORA_URL = process.env.ESPLORA_URL ?? "http://localhost:3002/regtest/api";
+const REGTEST_CONFIG = loadRegtestConfig();
+const ESPLORA_URL = process.env.ESPLORA_URL ?? REGTEST_CONFIG.esploraUrl;
 const ZKBTC_TOKEN_ID = 0x7a627463n;
 const REGTEST_NETWORK = 3;
 const MAX_HEADER_BATCH = 10;
 
-interface RelayArgs {
-  txid: string;
-  amountSats: bigint;
-  opReturn: Uint8Array;
-  depositAddress?: string;
-  depositVout?: number;
-}
-
-const args = parseArgs(process.argv.slice(2));
+const args = parseRelayArgs(process.argv.slice(2));
 await initPoseidon();
 await waitForEsplora(ESPLORA_URL, 30_000);
 await waitForTxIndexed(args.txid, ESPLORA_URL, 60_000);
@@ -49,9 +59,9 @@ const depositVout = args.depositVout ?? findDepositVout(args);
 const deposit = readDepositTransaction(args.txid);
 const block = readBlock(deposit.blockhash);
 const txIndex = findTxIndex(block, args.txid);
-const proof = buildMerkleProof(block.txids, txIndex);
-assertMerkleRoot(proof.root, block.merkleRoot);
-assertTxidMatches(deposit.txidRawTx, args.txid);
+const proof = buildBitcoinMerkleProof(block.txids, txIndex);
+assertBitcoinMerkleRoot(proof.root, block.merkleRoot);
+assertBitcoinTxidMatches(deposit.txidRawTx, args.txid);
 
 await ensureLightClient(block);
 const lightClient = requireState(state.lightClient, "lightClient");
@@ -174,60 +184,6 @@ function readBlock(hash: string): BlockContext {
   };
 }
 
-function findTxIndex(block: BlockContext, txid: string): number {
-  const index = block.txids.findIndex((candidate) => candidate === txid);
-  if (index < 0) {
-    throw new Error(`BTC transaction ${txid} was not found in block ${block.hash}`);
-  }
-  return index;
-}
-
-function buildMerkleProof(txids: string[], txIndex: number): {
-  siblings: Uint8Array[];
-  pathBits: bigint;
-  root: Uint8Array;
-} {
-  let level = txids.map(reverseHexToBytes);
-  let index = txIndex;
-  let pathBits = 0n;
-  const siblings: Uint8Array[] = [];
-
-  while (level.length > 1) {
-    const siblingIndex = index % 2 === 0
-      ? Math.min(index + 1, level.length - 1)
-      : index - 1;
-    siblings.push(level[siblingIndex]);
-    if (index % 2 === 1) {
-      pathBits |= 1n << BigInt(siblings.length - 1);
-    }
-
-    const next: Uint8Array[] = [];
-    for (let i = 0; i < level.length; i += 2) {
-      const left = level[i];
-      const right = level[i + 1] ?? left;
-      next.push(hash256(concatBytes(left, right)));
-    }
-    level = next;
-    index = Math.floor(index / 2);
-  }
-
-  return { siblings, pathBits, root: level[0] };
-}
-
-function assertMerkleRoot(actual: Uint8Array, expected: Uint8Array) {
-  if (toHex(actual) !== toHex(expected)) {
-    throw new Error(`Merkle proof root mismatch: got ${toHex(actual)}, expected ${toHex(expected)}`);
-  }
-}
-
-function assertTxidMatches(rawTx: Uint8Array, txid: string) {
-  const actual = toHex(hash256(rawTx));
-  const expected = toHex(reverseHexToBytes(txid));
-  if (actual !== expected) {
-    throw new Error(`Bitcoin txid serialization hash mismatch: got ${actual}, expected ${expected}`);
-  }
-}
-
 async function ensureLightClient(block: BlockContext) {
   if (!state.lightClient) {
     const parent = readBlock(block.previousblockhash);
@@ -340,58 +296,6 @@ function ikaVaultP2trScript(): Uint8Array {
   return Uint8Array.from(Buffer.concat([Buffer.from([0x51, 0x20]), Buffer.from(xonly, "hex")]));
 }
 
-function shared(tx: Transaction, ref: { objectId: string; initialSharedVersion: string | number }, mutable: boolean) {
-  return tx.sharedObjectRef({
-    objectId: ref.objectId,
-    initialSharedVersion: ref.initialSharedVersion,
-    mutable,
-  });
-}
-
-function parseArgs(argv: string[]): RelayArgs {
-  const map = new Map<string, string>();
-  for (let i = 0; i < argv.length; i += 1) {
-    const key = argv[i];
-    if (!key.startsWith("--")) continue;
-    const value = argv[i + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(`Missing value for ${key}`);
-    }
-    map.set(key.slice(2), value);
-    i += 1;
-  }
-
-  const txid = map.get("txid") ?? "";
-  if (!/^[0-9a-fA-F]{64}$/.test(txid)) {
-    throw new Error("--txid must be a 32-byte hex Bitcoin txid");
-  }
-  const amountText = map.get("amount-sats") ?? "";
-  if (!/^[1-9]\d*$/.test(amountText)) {
-    throw new Error("--amount-sats must be a positive integer");
-  }
-  const opReturnHex = map.get("op-return") ?? "";
-  if (!/^[0-9a-fA-F]{146}$/.test(opReturnHex)) {
-    throw new Error("--op-return must be exactly 73 bytes of hex");
-  }
-  const depositVoutText = map.get("deposit-vout");
-  const depositVout = depositVoutText == null ? undefined : Number(depositVoutText);
-  if (depositVout != null && (!Number.isInteger(depositVout) || depositVout < 0)) {
-    throw new Error("--deposit-vout must be a non-negative integer");
-  }
-  const depositAddress = map.get("deposit-address");
-  if (depositAddress && !/^bcrt1[a-z0-9]{38,90}$/.test(depositAddress)) {
-    throw new Error("--deposit-address must be a regtest bech32/bech32m address");
-  }
-
-  return {
-    txid: txid.toLowerCase(),
-    amountSats: BigInt(amountText),
-    opReturn: Uint8Array.from(Buffer.from(opReturnHex, "hex")),
-    depositAddress,
-    depositVout,
-  };
-}
-
 function findDepositVout(input: RelayArgs): number {
   if (!input.depositAddress) {
     return 0;
@@ -470,72 +374,4 @@ function rebuildTreeFromState(): CommitmentTreeIndex {
     tree.addCommitment(bytesToBigintLE(Uint8Array.from(Buffer.from(item.commitment, "hex"))), BigInt(item.amountSats));
   }
   return tree;
-}
-
-function bytesField(value: unknown): Uint8Array | null {
-  if (!Array.isArray(value)) return null;
-  const bytes = value.map((entry) => Number(entry));
-  if (!bytes.every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255)) return null;
-  return Uint8Array.from(bytes);
-}
-
-function bigintField(value: unknown): bigint | null {
-  if (typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.trunc(value));
-  if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
-  return null;
-}
-
-function numberField(value: unknown): number | null {
-  const valueBigint = bigintField(value);
-  if (valueBigint == null || valueBigint > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return Number(valueBigint);
-}
-
-function assertSuiSuccess(label: string, result: any) {
-  const status = result.effects?.status;
-  if (status?.status !== "success") {
-    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
-  }
-}
-
-function bytesToBigintBE(bytes: Uint8Array): bigint {
-  let result = 0n;
-  for (const byte of bytes) result = (result << 8n) | BigInt(byte);
-  return result;
-}
-
-function bytesToBigintLE(bytes: Uint8Array): bigint {
-  let result = 0n;
-  for (let i = bytes.length - 1; i >= 0; i -= 1) {
-    result = (result << 8n) | BigInt(bytes[i]);
-  }
-  return result;
-}
-
-function fieldToSuiBytes(value: bigint): Uint8Array {
-  const bytes = Buffer.alloc(32);
-  let n = value;
-  for (let i = 0; i < 32; i += 1) {
-    bytes[i] = Number(n & 0xffn);
-    n >>= 8n;
-  }
-  return bytes;
-}
-
-function reverseHexToBytes(hex: string): Uint8Array {
-  return Uint8Array.from(Buffer.from(hex, "hex").reverse());
-}
-
-function toHex(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("hex");
-}
-
-function hash256(bytes: Uint8Array): Uint8Array {
-  const first = createHash("sha256").update(bytes).digest();
-  return Uint8Array.from(createHash("sha256").update(first).digest());
-}
-
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-  return Uint8Array.from(Buffer.concat(parts.map((part) => Buffer.from(part))));
 }

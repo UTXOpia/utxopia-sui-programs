@@ -2,7 +2,8 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { UTXOpiaSuiAdapter } from "@utxopia/sdk/sui";
-import { ROOT, parseJsonFromStdout, readState, requireState, writeState } from "./shared";
+import { hexToBytes } from "./lib/bytes";
+import { ROOT, objectRefFromChange, readState, requireState, writeState } from "./shared";
 import { executeTransactionKind } from "./signing";
 
 const circuit = process.argv[2] ?? "joinsplit_1x1";
@@ -91,6 +92,10 @@ if (process.env.UTXOPIA_SUI_BUILD_ONLY === "1") {
   output.note = "PTB bytes built and state updated. Set UTXOPIA_SUI_BUILD_ONLY=0 or omit it to execute on-chain.";
 } else {
   const result = await executeTransactionKind(tx.bytes);
+  const adminChange = (result.objectChanges ?? []).find((change: any) =>
+    change.objectId === adminCap.objectId && (change.type === "mutated" || change.type === "created")
+  );
+  state.adminCap = objectRefFromChange(adminChange) ?? state.adminCap;
   state.vk[circuit].registerTxDigest = result.digest;
   output.registerTxDigest = result.digest;
   output.status = result.effects?.status;
@@ -103,11 +108,3 @@ if (process.env.UTXOPIA_SUI_BUILD_ONLY === "1") {
 writeState(state);
 
 console.log(JSON.stringify(output, null, 2));
-
-function hexToBytes(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}

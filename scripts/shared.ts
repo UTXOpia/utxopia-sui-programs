@@ -65,6 +65,16 @@ export interface UtxopiaSuiState {
   redemptionQueue?: SuiSharedObjectRef;
   redemptionCap?: SuiObjectRef;
   verifyingKeyRegistry?: SuiSharedObjectRef;
+  tokenRegistry?: SuiSharedObjectRef;
+  registeredTokens?: Record<string, {
+    coinType: string;
+    metadataId: string;
+    minDeposit: string;
+    maxDeposit: string;
+    depositCap: string;
+    feeBps: number;
+    registerTxDigest?: string;
+  }>;
   lastRedemption?: {
     redemptionId: string;
     requestTxDigest: string;

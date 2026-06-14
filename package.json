@@ -3,7 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check:scripts": "bun build scripts/live-transact.ts scripts/regtest-flow.ts scripts/relay-deposit.ts scripts/deploy.ts scripts/init.ts scripts/register-vkey.ts --target=node --outdir=/tmp/utxopia-sui-programs-build"
+    "check:scripts": "bun build scripts/live-transact.ts scripts/regtest.ts scripts/regtest-flow.ts scripts/relay-deposit.ts scripts/deploy.ts scripts/init.ts scripts/register-vkey.ts --target=node --outdir=/tmp/utxopia-sui-programs-build",
+    "check:scripts:all": "bun build scripts/*.ts --target=node --outdir=/tmp/utxopia-sui-programs-build-all",
+    "test:unit": "cd contracts && sui move test && cd ../indexer && bun test test && cd .. && bun test scripts/test",
+    "test:build": "bun run check:scripts",
+    "test:local": "bun scripts/e2e-localnet.ts",
+    "test:regtest": "bun scripts/regtest.ts run --existing",
+    "test:regtest:fresh": "bun scripts/regtest.ts run --existing --reset-sui",
+    "test:regtest:managed": "bun scripts/regtest.ts run --start --stop-after",
+    "test:regtest:managed:fresh": "bun scripts/regtest.ts run --start --reset-sui --stop-after",
+    "regtest:start": "bun scripts/regtest.ts start",
+    "regtest:stop": "bun scripts/regtest.ts stop"
   },
   "dependencies": {
     "@ika.xyz/sdk": "^0.4.1",

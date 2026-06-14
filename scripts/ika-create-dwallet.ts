@@ -9,6 +9,7 @@ import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { readState, writeState } from "./shared";
 import { bytesToHex, loadOrCreateIkaUserShareKeys } from "./ika-user-share-keys";
+import { assertSuiSuccess } from "./lib/sui-tx";
 import { activeSuiAddress, executeBuiltTransaction, loadActiveEd25519Keypair } from "./signing";
 import { UTXOpiaSuiIkaAdapter } from "@utxopia/sdk/sui";
 
@@ -168,13 +169,6 @@ async function writeKnownState(input: {
   }
 
   writeState(state);
-}
-
-function assertSuiSuccess(label: string, result: any) {
-  const status = result.effects?.status;
-  if (status?.status !== "success") {
-    throw new Error(`${label} failed: ${JSON.stringify(status)}`);
-  }
 }
 
 function findCreatedObjectId(result: any, objectTypeSuffix: string): string | undefined {

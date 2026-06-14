@@ -2,12 +2,14 @@
 import { spawnSync } from "node:child_process";
 import { ROOT, objectRefFromChange, parseJsonFromStdout, readState, stateFile, writeState } from "./shared";
 import path from "node:path";
-import { existsSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const network = process.env.UTXOPIA_SUI_NETWORK ?? "testnet";
-const gasBudget = process.env.UTXOPIA_SUI_GAS_BUDGET ?? "200000000";
+const state = readState();
+const gasBudget = process.env.UTXOPIA_SUI_DEPLOY_GAS_BUDGET ?? "500000000";
 const packagePath = path.join(ROOT, "contracts");
 const publishedFile = path.join(packagePath, "Published.toml");
+const previousPublished = existsSync(publishedFile) ? readFileSync(publishedFile, "utf8") : null;
 
 if (existsSync(publishedFile)) {
   unlinkSync(publishedFile);
@@ -17,6 +19,8 @@ const result = spawnSync("sui", [
   "client",
   "publish",
   packagePath,
+  "--silence-warnings",
+  "--skip-dependency-verification",
   "--gas-budget",
   gasBudget,
   "--json",
@@ -27,7 +31,9 @@ const result = spawnSync("sui", [
 });
 
 if (result.status !== 0) {
-  console.error(result.stderr || result.stdout);
+  restorePublishedFile();
+  if (result.stderr) console.error(result.stderr);
+  if (result.stdout) console.error(result.stdout);
   process.exit(result.status ?? 1);
 }
 
@@ -42,7 +48,6 @@ if (!published?.packageId) {
   throw new Error("Could not find published packageId in Sui publish output");
 }
 
-const state = readState();
 state.network = network;
 state.packageId = published.packageId;
 state.upgradeCap = objectRefFromChange(upgradeCapChange);
@@ -57,7 +62,10 @@ delete state.nullifierRegistry;
 delete state.redemptionQueue;
 delete state.redemptionCap;
 delete state.verifyingKeyRegistry;
+delete state.tokenRegistry;
+delete state.registeredTokens;
 delete state.vk;
+delete (state as any).regtestPoolBtcAddress;
 delete state.lastRedemption;
 delete state.lastTransact;
 delete (state as any).lastSuiRegtestFlow;
@@ -70,3 +78,8 @@ console.log(JSON.stringify({
   packageId: state.packageId,
   upgradeCap: state.upgradeCap,
 }, null, 2));
+
+function restorePublishedFile() {
+  if (previousPublished == null) return;
+  writeFileSync(publishedFile, previousPublished);
+}

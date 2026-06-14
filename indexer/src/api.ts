@@ -15,6 +15,10 @@ export function createSuiIndexerApi(
 ) {
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    // Lightweight access log (ops visibility + confirms who reads the indexer).
+    if (url.pathname !== "/health") {
+      console.log(`[api] ${req.method} ${url.pathname}${url.search}`);
+    }
 
     if (url.pathname === "/health") {
       return json({ ok: true, packageId: config.packageId });

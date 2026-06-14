@@ -78,7 +78,15 @@ becomes a thin reader:
 ingest (GraphQL→checkpoint) → SQLite → normalized `/api/*` → web reads — exactly the
 Solana shape (event_indexer/reconciler → SQLite → axum `/api/*` → web reads).
 
-## Build order
-Phase 1 (ingest+DB) → Phase 2 (API) → Phase 3 (web wire + fallback) → Phase 4 (deploy).
-Phases 1–2 make the indexer authoritative; Phase 3 flips the web read path; Phase 4
-hardens for scale.
+## Build order / status
+- Phase 1 (ingest + DB) — **DONE**: GraphQL source added behind `SuiEventSource`,
+  JSON-RPC source fixed to filter by `eventsPackageId`, timestamps persisted, projections
+  wired into the server on a shared sqlite handle.
+- Phase 2 (normalized API) — **DONE**: `/api/explorer/transactions` + `/api/explorer/stats`
+  served from the DB (web's client-side builders ported server-side). Tests + build pass.
+- Phase 3 (web reads w/ fallback) — **DONE (code)**: `sui.indexerUrl` in `networks.json`;
+  `web/lib/sui/explorer.ts` reads the indexer first, falls back to direct RPC. Inert until
+  `indexerUrl` is set.
+- Phase 4 (deploy) — **DONE (artifacts)**: `Dockerfile` + `railway.toml/json` + `.env.example`.
+  Remaining operator steps: deploy the service with a volume, then set `sui.indexerUrl`.
+- Later: swap `GraphQLEventSource` → `CheckpointEventSource` (checkpoint stream) for mainnet scale.

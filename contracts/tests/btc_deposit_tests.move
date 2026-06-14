@@ -227,7 +227,7 @@ module utxopia::btc_deposit_tests {
         h
     }
 
-    /// One-input, two-output legacy tx. Input spends (bytes32(0x11), vout 7).
+    /// One-input, two-output non-SegWit tx. Input spends (bytes32(0x11), vout 7).
     fun build_deposit_tx(v0: u64, s0: vector<u8>, s1: vector<u8>): vector<u8> {
         let mut tx = le32(1);
         vector::append(&mut tx, vector[0x01u8]);   // 1 input

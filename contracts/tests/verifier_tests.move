@@ -56,6 +56,34 @@ module utxopia::verifier_tests {
         test_scenario::end(scenario);
     }
 
+    // Only one VK per (n_inputs, n_outputs): a second registration with a
+    // different vk_hash for the same shape is rejected.
+    #[test, expected_failure(abort_code = 8)]
+    fun rejects_second_vk_for_same_variant() {
+        let mut scenario = test_scenario::begin(SENDER);
+        pool::initialize(16, test_scenario::ctx(&mut scenario));
+        verifier::initialize_registry(test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let admin_cap = test_scenario::take_from_sender<AdminCap>(&scenario);
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        pool::set_vk_registry_id(&admin_cap, &mut pool, object::id(&registry));
+
+        let mut vk_a = vector[];
+        let mut vk_b = vector[];
+        let mut i = 0u64;
+        while (i < 32) { vector::push_back(&mut vk_a, 1u8); vector::push_back(&mut vk_b, 2u8); i = i + 1; };
+
+        verifier::register_prepared_key(&admin_cap, &pool, &mut registry, 2, 2, 6, vk_a, vector[1], vector[2], vector[3], vector[4]);
+        verifier::register_prepared_key(&admin_cap, &pool, &mut registry, 2, 2, 6, vk_b, vector[1], vector[2], vector[3], vector[4]);
+
+        test_scenario::return_to_sender(&scenario, admin_cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(registry);
+        test_scenario::end(scenario);
+    }
+
     #[test, expected_failure(abort_code = 40)]
     fun rejects_unbound_vk_registry() {
         let mut scenario = test_scenario::begin(SENDER);

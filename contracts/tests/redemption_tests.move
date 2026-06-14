@@ -2,6 +2,8 @@
 module utxopia::redemption_tests {
     use sui::object;
     use sui::test_scenario;
+    use utxopia::bitcoin;
+    use utxopia::btc_light_client;
     use utxopia::btc_deposit::{Self, UtxoSet};
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::nullifier::{Self, NullifierRegistry};
@@ -105,7 +107,6 @@ module utxopia::redemption_tests {
             vector[],
             vector[],
             vector[],
-            vector[],
             test_scenario::ctx(&mut scenario),
         );
 
@@ -148,7 +149,6 @@ module utxopia::redemption_tests {
             vector[bytes(32, 0x02)],
             vector[bytes(34, 0x51)],
             vector[50_000],
-            vector[1_000],
             vector[],
             test_scenario::ctx(&mut scenario),
         );
@@ -199,7 +199,6 @@ module utxopia::redemption_tests {
             commitments_out,
             vector[submitted_script],
             vector[amount],
-            vector[1_000],
             vector[],
             test_scenario::ctx(&mut scenario),
         );
@@ -213,7 +212,7 @@ module utxopia::redemption_tests {
         test_scenario::end(scenario);
     }
 
-    #[test, expected_failure(abort_code = 3)]
+    #[test, expected_failure(abort_code = 13)]
     fun redeem_rejects_mutated_public_amount() {
         let mut scenario = test_scenario::begin(SENDER);
         setup(&mut scenario);
@@ -250,7 +249,6 @@ module utxopia::redemption_tests {
             commitments_out,
             vector[bytes(34, 0x51)],
             vector[submitted_amount],
-            vector[1_000],
             vector[],
             test_scenario::ctx(&mut scenario),
         );
@@ -305,7 +303,6 @@ module utxopia::redemption_tests {
             submitted_commitments_out,
             vector[bytes(34, 0x51)],
             vector[amount],
-            vector[1_000],
             vector[bytes(72, 0x12)],
             test_scenario::ctx(&mut scenario),
         );
@@ -394,6 +391,203 @@ module utxopia::redemption_tests {
         redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x52), 50_000, 1_000, test_scenario::ctx(&mut scenario));
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 0, vector[bytes(32, 0x44)], vector[7], 500);
         redemption::mark_processing(&cap, &pool, &mut utxo_set, &mut queue, 1, vector[bytes(32, 0x44)], vector[7], 500);
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    // ---- complete_redemption coverage (findings #1 change-theft, #3 extra-input) ----
+
+    const LC_ADDR: address = @0x11C;
+    const POOL_SCRIPT: vector<u8> = b"pool-change-script----"; // 22 bytes
+
+    fun le_u32(v: u32): vector<u8> {
+        let mut out = vector[];
+        let mut i = 0u64;
+        while (i < 4) { vector::push_back(&mut out, (((v >> ((8 * i) as u8)) & 0xff) as u8)); i = i + 1; };
+        out
+    }
+
+    fun le_u64(v: u64): vector<u8> {
+        let mut out = vector[];
+        let mut i = 0u64;
+        while (i < 8) { vector::push_back(&mut out, (((v >> ((8 * i) as u8)) & 0xff) as u8)); i = i + 1; };
+        out
+    }
+
+    // Builds a minimal non-segwit Bitcoin tx. Scripts must be < 0xfd bytes.
+    fun build_tx(
+        in_txids: vector<vector<u8>>,
+        in_vouts: vector<u32>,
+        out_values: vector<u64>,
+        out_scripts: vector<vector<u8>>,
+    ): vector<u8> {
+        let mut tx = vector[0x01, 0x00, 0x00, 0x00]; // version
+        vector::push_back(&mut tx, (vector::length(&in_txids) as u8)); // input count varint
+        let mut i = 0u64;
+        while (i < vector::length(&in_txids)) {
+            vector::append(&mut tx, *vector::borrow(&in_txids, i)); // prev txid (32)
+            vector::append(&mut tx, le_u32(*vector::borrow(&in_vouts, i))); // prev vout
+            vector::push_back(&mut tx, 0x00); // empty scriptSig
+            vector::append(&mut tx, vector[0xff, 0xff, 0xff, 0xff]); // sequence
+            i = i + 1;
+        };
+        vector::push_back(&mut tx, (vector::length(&out_values) as u8)); // output count varint
+        let mut j = 0u64;
+        while (j < vector::length(&out_values)) {
+            vector::append(&mut tx, le_u64(*vector::borrow(&out_values, j))); // value
+            let script = *vector::borrow(&out_scripts, j);
+            vector::push_back(&mut tx, (vector::length(&script) as u8)); // script len varint
+            vector::append(&mut tx, script);
+            j = j + 1;
+        };
+        vector::append(&mut tx, vector[0x00, 0x00, 0x00, 0x00]); // locktime
+        tx
+    }
+
+    // Stand up a pool (all companion ids + light client + change script bound) with one
+    // 100k-sat reserved UTXO behind a redemption for 50k. Takes AdminCap exactly once.
+    fun setup_processing(
+        scenario: &mut test_scenario::Scenario,
+        pool: &mut Pool,
+        tree: &CommitmentTree,
+        utxo_set: &mut UtxoSet,
+        nullifiers: &NullifierRegistry,
+        vk_registry: &VerifyingKeyRegistry,
+        queue: &mut RedemptionQueue,
+        cap: &utxopia::redemption::RedemptionCap,
+        btc_script: vector<u8>,
+    ) {
+        let admin = test_scenario::take_from_sender<AdminCap>(scenario);
+        pool::set_commitment_tree_id(&admin, pool, object::id(tree));
+        pool::set_utxo_set_id(&admin, pool, object::id(utxo_set));
+        pool::set_nullifier_registry_id(&admin, pool, object::id(nullifiers));
+        pool::set_vk_registry_id(&admin, pool, object::id(vk_registry));
+        pool::set_light_client_id(&admin, pool, object::id_from_address(LC_ADDR));
+        pool::set_btc_pool_script(&admin, pool, POOL_SCRIPT);
+        test_scenario::return_to_sender(scenario, admin);
+
+        btc_deposit::test_add_utxo(utxo_set, pool::pool_id(pool), bytes(32, 0x44), 7, 100_000, test_scenario::ctx(scenario));
+        redemption::test_request_redemption(pool, queue, btc_script, 50_000, 2_000, test_scenario::ctx(scenario));
+        redemption::mark_processing(cap, pool, utxo_set, queue, 0, vector[bytes(32, 0x44)], vector[7], 1_000);
+    }
+
+    #[test]
+    fun complete_redemption_returns_change_to_pool() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
+
+        let btc_script = bytes(34, 0x51);
+        setup_processing(&mut scenario, &mut pool, &tree, &mut utxo_set, &nullifiers, &vk_registry, &mut queue, &cap, btc_script);
+
+        // 50k to redeemer + 49k change to pool => 1k miner fee (<= 2k cap).
+        let raw_tx = build_tx(
+            vector[bytes(32, 0x44)],
+            vector[7],
+            vector[50_000, 49_000],
+            vector[btc_script, POOL_SCRIPT],
+        );
+        let txid = bitcoin::double_sha256(&raw_tx);
+        let inclusion = btc_light_client::test_new_inclusion(object::id_from_address(LC_ADDR), txid);
+
+        redemption::complete_redemption(&cap, &pool, &mut utxo_set, &mut queue, 0, inclusion, raw_tx, test_scenario::ctx(&mut scenario));
+
+        // Reserved input consumed, pool change (output index 1) recorded.
+        assert!(!btc_deposit::contains_utxo(&utxo_set, bytes(32, 0x44), 7), 0);
+        assert!(btc_deposit::contains_utxo(&utxo_set, txid, 1), 1);
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 6)]
+    fun complete_redemption_rejects_change_to_attacker() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
+
+        let btc_script = bytes(34, 0x51);
+        setup_processing(&mut scenario, &mut pool, &tree, &mut utxo_set, &nullifiers, &vk_registry, &mut queue, &cap, btc_script);
+
+        // Change routed to an attacker script instead of the pool => must abort.
+        let raw_tx = build_tx(
+            vector[bytes(32, 0x44)],
+            vector[7],
+            vector[50_000, 49_000],
+            vector[btc_script, bytes(22, 0xee)],
+        );
+        let txid = bitcoin::double_sha256(&raw_tx);
+        let inclusion = btc_light_client::test_new_inclusion(object::id_from_address(LC_ADDR), txid);
+
+        redemption::complete_redemption(&cap, &pool, &mut utxo_set, &mut queue, 0, inclusion, raw_tx, test_scenario::ctx(&mut scenario));
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 6)]
+    fun complete_redemption_rejects_extra_input() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+        let cap = test_scenario::take_from_sender<utxopia::redemption::RedemptionCap>(&scenario);
+
+        let btc_script = bytes(34, 0x51);
+        setup_processing(&mut scenario, &mut pool, &tree, &mut utxo_set, &nullifiers, &vk_registry, &mut queue, &cap, btc_script);
+
+        // Tx spends an extra (unreserved) input beyond the single reserved UTXO => must abort.
+        let raw_tx = build_tx(
+            vector[bytes(32, 0x44), bytes(32, 0x55)],
+            vector[7, 8],
+            vector[50_000, 49_000],
+            vector[btc_script, POOL_SCRIPT],
+        );
+        let txid = bitcoin::double_sha256(&raw_tx);
+        let inclusion = btc_light_client::test_new_inclusion(object::id_from_address(LC_ADDR), txid);
+
+        redemption::complete_redemption(&cap, &pool, &mut utxo_set, &mut queue, 0, inclusion, raw_tx, test_scenario::ctx(&mut scenario));
 
         test_scenario::return_to_sender(&scenario, cap);
         test_scenario::return_shared(pool);

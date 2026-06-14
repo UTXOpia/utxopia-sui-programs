@@ -151,7 +151,7 @@ module utxopia::bitcoin_tests {
         s
     }
 
-    /// One-input, two-output legacy tx. Input spends (bytes32(0x11), vout 7).
+    /// One-input, two-output non-SegWit tx. Input spends (bytes32(0x11), vout 7).
     fun build_tx(v0: u64, s0: vector<u8>, v1: u64, s1: vector<u8>): vector<u8> {
         let mut tx = le32(1); // version
         vector::append(&mut tx, vector[0x01u8]); // 1 input

@@ -182,6 +182,62 @@ module utxopia::btc_light_client_tests {
         test_scenario::end(scenario);
     }
 
+    // A heavier fork assembled across TWO batches: b1,b2 (equal work, stays
+    // non-canonical), then b3,b4 off the stored b2 makes B heaviest. The lower
+    // heights (101,102) must re-canonicalize to the B chain, not the orphaned A.
+    #[test]
+    fun i_reorg_multi_batch_fork() {
+        let mut scenario = test_scenario::begin(SENDER);
+        let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
+        lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let g = lc::tip_hash(&light);
+
+        // chain A: 2 blocks (incumbent canonical)
+        let a1 = make_header(g, bytes32(11), 1001, REGTEST_BITS, 1);
+        let a1h = lc::test_double_sha256(a1);
+        let a2 = make_header(a1h, bytes32(12), 1002, REGTEST_BITS, 2);
+        let a2h = lc::test_double_sha256(a2);
+        let mut batch_a = a1;
+        vector::append(&mut batch_a, a2);
+        lc::submit_headers(&mut light, batch_a, &clk);
+        assert!(lc::tip_hash(&light) == a2h, 0);
+
+        // fork B batch 1: equal work from genesis — stays non-canonical
+        let b1 = make_header(g, bytes32(21), 1001, REGTEST_BITS, 11);
+        let b1h = lc::test_double_sha256(b1);
+        let b2 = make_header(b1h, bytes32(22), 1002, REGTEST_BITS, 12);
+        let b2h = lc::test_double_sha256(b2);
+        let mut batch_b1 = b1;
+        vector::append(&mut batch_b1, b2);
+        lc::submit_headers(&mut light, batch_b1, &clk);
+        assert!(lc::tip_hash(&light) == a2h, 1);
+        assert!(lc::confirmations(&light, b1h) == 0, 2);
+
+        // fork B batch 2: b3,b4 off the stored, non-canonical b2 — now heaviest
+        let b3 = make_header(b2h, bytes32(23), 1003, REGTEST_BITS, 13);
+        let b3h = lc::test_double_sha256(b3);
+        let b4 = make_header(b3h, bytes32(24), 1004, REGTEST_BITS, 14);
+        let b4h = lc::test_double_sha256(b4);
+        let mut batch_b2 = b3;
+        vector::append(&mut batch_b2, b4);
+        lc::submit_headers(&mut light, batch_b2, &clk);
+
+        assert!(lc::tip_height(&light) == 104, 3);
+        assert!(lc::tip_hash(&light) == b4h, 4);
+        assert!(lc::confirmations(&light, b1h) == 4, 5);
+        assert!(lc::confirmations(&light, b2h) == 3, 6);
+        assert!(lc::confirmations(&light, a1h) == 0, 7);
+        assert!(lc::confirmations(&light, a2h) == 0, 8);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
     #[test]
     fun i_verify_single_tx_inclusion() {
         let mut scenario = test_scenario::begin(SENDER);

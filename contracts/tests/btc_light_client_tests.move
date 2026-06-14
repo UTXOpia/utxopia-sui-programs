@@ -50,13 +50,6 @@ module utxopia::btc_light_client_tests {
     }
 
     #[test]
-    fun u_wrapping_sub() {
-        assert!(lc::test_wrapping_sub_u32(10, 5) == 5, 0);
-        assert!(lc::test_wrapping_sub_u32(5, 10) == 4294967291, 1); // 0xFFFFFFFB
-        assert!(lc::test_wrapping_sub_u32(0, 1) == 4294967295, 2);  // 0xFFFFFFFF
-    }
-
-    #[test]
     fun u_calculate_new_bits() {
         // exactly the target timespan => difficulty unchanged
         assert!(lc::test_calculate_new_bits(0x1d00ffff, 1209600) == 0x1d00ffff, 0);

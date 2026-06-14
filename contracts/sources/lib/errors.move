@@ -50,6 +50,8 @@ module utxopia::errors {
     const E_ACCOUNTING_DESYNC: u64 = 49;
     const E_TREE_NOT_FULL: u64 = 50;
     const E_INVALID_TREE_ROTATION: u64 = 51;
+    const E_TIMESTAMP_TOO_FAR: u64 = 52;
+    public fun timestamp_too_far(): u64 { E_TIMESTAMP_TOO_FAR }
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
     public fun invalid_commitment(): u64 { E_INVALID_COMMITMENT }

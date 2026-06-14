@@ -26,6 +26,22 @@ Local state file: `utxopia-sui-state.json` (gitignored); pre-deploy backup saved
 `init.ts` bound to the pool: commitment-tree, nullifier-registry, btc-deposit-registry,
 utxo-set, vk-registry.
 
+### Initialization completed (matches previous program's settings)
+
+- **BTC pool script** bound → `P2TR(32697b92…2f9908)` from the existing relayer-owned Ika
+  dWallet (`dWalletId 0xe926ed3b…`, reused — no new DKG).
+- **Light client** `0x34a22f07c78aee91731afde0936e2f56db2a4decc73f451401a882a111f8b473`
+  (regtest, anchored at tip height 563) + `lightClientAdminCap 0x0b1f07e8…`; bound to pool.
+  Bootstrapped via new `scripts/init-light-client.ts`.
+- **Token registry** `0x0534d435a699f63205fa515f8c5bfaf6e015764e02ad1d42e1bc0045769e1d02`
+  (empty — no Coin<T> registered, same as before), bound to pool.
+- **Verifying keys**: all 15 circuits registered (same set as the previous deployment / the
+  Solana set intersected with the Sui verifier cap n+m ≤ 6): `joinsplit_1x1..1x5, 2x1..2x4,
+  3x1..3x3, 4x1, 4x2, 5x1`.
+- Pool config: defaults from `pool::initialize(16)` (same as previous); `paused = false`.
+
+All pool companion ids verified set on-chain.
+
 ## ⚠️ Deployment landscape mismatch (must resolve before repointing clients)
 
 - `web/src/lib/networks.json` `sui-testnet` points at `packageId 0x719b02e476df24cea6…`
@@ -34,20 +50,15 @@ utxo-set, vk-registry.
 - So the local state and the live web were already out of sync. Identify which package is
   the real production testnet deployment before pausing anything or repointing web.
 
-## Remaining steps (NOT done — each blocked on an input/dependency)
+## Remaining steps
 
-1. **BTC light client bootstrap** — `btc_light_client::initialize`. The existing flow
-   (`regtest-flow.ts ensureLightClientInitialized`) anchors to a running bitcoind tip
-   (network byte 3 = regtest). Needs a live Bitcoin node or explicit testnet4
-   genesis/checkpoint params (raw header, height, chainwork, bits, time).
-2. **Register verifying keys** — `register-vkey.ts` per circuit. Artifacts exist at
-   `../circuits/build/joinsplit_<n>x<m>/joinsplit_<n>x<m>.vkey.json`; the script also needs
-   the Rust `../utxopia-circuits/sui-groth16-exporter` (cargo). Decide which circuit
-   dimensions to register.
-3. **Token registry** — `init-token-registry.ts` + `register-sui` (which Coin<T> types).
-4. **Bind BTC pool script** — `_bind-pool-btc-script.ts` needs the pool's BTC taproot
-   x-only pubkey (from the Ika dWallet custody key).
-5. **Repoint clients** — update `web/src/lib/networks.json` `sui-testnet` (+ any SDK config)
-   to the ids above. Do this only AFTER 1–4, or web will serve a half-initialized package.
-6. **Pause/abandon the superseded package** — `pool::set_paused(adminCap, pool, true)`.
-   Confirm which package is production first.
+1. ~~BTC light client bootstrap~~ — DONE (regtest tip 563).
+2. ~~Register verifying keys~~ — DONE (15 circuits).
+3. ~~Token registry~~ — DONE (empty, bound).
+4. ~~Bind BTC pool script~~ — DONE (dWallet P2TR).
+5. **Repoint clients** — update `web/src/lib/networks.json` (`sui-regtest`/`sui-testnet`) +
+   any SDK config to the ids above IF you want web to drive this deployment. The regtest E2E
+   scripts already use `utxopia-sui-state.json` directly, so they pick it up without a repoint.
+   Do NOT repoint the public web testnet at this dev/regtest deployment.
+6. **Pause/abandon the superseded package(s)** — `pool::set_paused(adminCap, pool, true)`.
+   Confirm which package is production first (web currently uses `0x719b02e4…`).

@@ -17,6 +17,8 @@ module utxopia::btc_light_client {
     const BLOCKS_PER_EPOCH: u64 = 2016;
     const TARGET_TIMESPAN: u64 = 1_209_600;
     const MAX_MERKLE_DEPTH: u64 = 20;
+    /// Bitcoin's ~2h future-time bound on header timestamps (in ms, for Sui Clock).
+    const MAX_FUTURE_DRIFT_MS: u64 = 2 * 60 * 60 * 1000;
     const MAX_U256: u256 =
         0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
     const MAX_TARGET: u256 =
@@ -84,7 +86,7 @@ module utxopia::btc_light_client {
             tip_hash: block_hash,
             tip_height: genesis_height,
             total_chainwork: genesis_chainwork,
-            finalized_height: saturating_sub(genesis_height, required_confirmations),
+            finalized_height: saturating_sub(genesis_height, required_confirmations - 1),
             expected_bits: genesis_expected_bits,
             epoch_start_time: genesis_epoch_start_time,
             genesis_hash: block_hash,
@@ -144,6 +146,13 @@ module utxopia::btc_light_client {
             let block_hash = double_sha256(&raw);
             let block_height = running_height + 1;
             if (!regtest) {
+                // Reject headers more than ~2h in the future (consensus future-time bound).
+                // Closes the testnet4 min-difficulty abuse of arbitrarily-future timestamps.
+                let now_ms = clock::timestamp_ms(clock);
+                assert!(
+                    (timestamp as u64) * 1000 <= now_ms + MAX_FUTURE_DRIFT_MS,
+                    errors::timestamp_too_far(),
+                );
                 let required_bits = required_bits_for_next_block(
                     testnet4,
                     block_height,
@@ -221,7 +230,12 @@ module utxopia::btc_light_client {
             lc.tip_hash = prev_hash;
             lc.tip_height = running_height;
             lc.total_chainwork = running_chainwork;
-            lc.finalized_height = saturating_sub(running_height, lc.required_confirmations);
+            // Deepest block with >= required_confirmations is at tip-(required-1) (confs are
+            // inclusive). Advance only — never move finality backward on a heavier-but-shorter reorg.
+            let candidate = saturating_sub(running_height, lc.required_confirmations - 1);
+            if (candidate > lc.finalized_height) {
+                lc.finalized_height = candidate;
+            };
             if (!regtest) {
                 lc.expected_bits = running_expected_bits;
                 lc.epoch_start_time = running_epoch_start;
@@ -268,6 +282,8 @@ module utxopia::btc_light_client {
             while (i < n_sib) {
                 let sib = *vector::borrow(&merkle_siblings, i);
                 assert!(vector::length(&sib) == 32, errors::bad_merkle_proof());
+                // Reject a sibling equal to the current node (CVE-2012-2459 duplicate-child forgery).
+                assert!(sib != current, errors::bad_merkle_proof());
                 let is_left = ((path_bits >> (i as u8)) & 1) == 1;
                 current = if (is_left) {
                     double_sha256_pair(&sib, &current)
@@ -277,6 +293,10 @@ module utxopia::btc_light_client {
                 i = i + 1;
             };
             assert!(current == rec.merkle_root, errors::bad_merkle_proof());
+            // path_bits must not assert positions beyond the proof depth, and must equal the
+            // declared tx_index (the LE bit pattern IS the leaf index in a Bitcoin merkle proof).
+            assert!((path_bits >> (n_sib as u8)) == 0, errors::bad_merkle_proof());
+            assert!((tx_index as u64) == path_bits, errors::bad_merkle_proof());
         };
         VerifiedInclusion {
             light_client_id: object::id(lc),
@@ -419,10 +439,15 @@ module utxopia::btc_light_client {
             return 0
         };
         if (block_height % BLOCKS_PER_EPOCH == 0) {
+            // A backward epoch timestamp is a negative timespan in Bitcoin Core, which clamps
+            // to the LOW bound (TARGET/4, difficulty increase). Feeding 0 into calculate_new_bits
+            // hits that same low clamp; wrapping into a huge u32 would wrongly pick the HIGH clamp.
             let actual = if (epoch_start_time == 0) {
                 TARGET_TIMESPAN as u32
+            } else if (parent_timestamp >= epoch_start_time) {
+                parent_timestamp - epoch_start_time
             } else {
-                wrapping_sub_u32(parent_timestamp, epoch_start_time)
+                0
             };
             return calculate_new_bits(epoch_bits, actual)
         };
@@ -459,13 +484,6 @@ module utxopia::btc_light_client {
             i = i + 1;
         };
         out
-    }
-    fun wrapping_sub_u32(a: u32, b: u32): u32 {
-        if (a >= b) {
-            a - b
-        } else {
-            (((a as u64) + 0x1_0000_0000 - (b as u64)) as u32)
-        }
     }
     fun saturating_sub(a: u64, b: u64): u64 {
         if (a >= b) { a - b } else { 0 }
@@ -504,8 +522,6 @@ module utxopia::btc_light_client {
             epoch_start_time,
         )
     }
-    #[test_only]
-    public fun test_wrapping_sub_u32(a: u32, b: u32): u32 { wrapping_sub_u32(a, b) }
     #[test_only]
     public fun test_max_target(): u256 { MAX_TARGET }
 }

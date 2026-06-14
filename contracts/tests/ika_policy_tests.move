@@ -1,7 +1,7 @@
 #[test_only]
 module utxopia::ika_policy_tests {
     use sui::test_scenario;
-    use utxopia::pool::{Self, Pool};
+    use utxopia::pool::{Self, Pool, AdminCap};
     use utxopia::redemption::{Self, RedemptionQueue, RedemptionCap};
     use utxopia::ika_policy::{Self, SigningApproval};
 
@@ -83,6 +83,47 @@ module utxopia::ika_policy_tests {
         test_scenario::return_to_sender(&scenario, cap);
         test_scenario::return_shared(pool);
         test_scenario::return_shared(queue);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 1)]
+    fun rejects_consume_when_paused() {
+        let mut scenario = test_scenario::begin(SENDER);
+        init_world(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        // request + approve while live
+        {
+            let mut pool = test_scenario::take_shared<Pool>(&scenario);
+            let mut queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+            let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
+
+            redemption::test_request_redemption(&mut pool, &mut queue, bytes(34, 0x51), 50_000, 1_000, test_scenario::ctx(&mut scenario));
+            ika_policy::approve_signing(&cap, &pool, &queue, DWALLET_CAP, 0, 800, bytes(32, 0x7a), test_scenario::ctx(&mut scenario));
+
+            test_scenario::return_to_sender(&scenario, cap);
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(queue);
+        };
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        // pause, then attempt to consume the pre-pause approval -> aborts pool_paused (1)
+        {
+            let mut pool = test_scenario::take_shared<Pool>(&scenario);
+            let queue = test_scenario::take_shared<RedemptionQueue>(&scenario);
+            let cap = test_scenario::take_from_sender<RedemptionCap>(&scenario);
+            let admin = test_scenario::take_from_sender<AdminCap>(&scenario);
+            let mut approval = test_scenario::take_shared<SigningApproval>(&scenario);
+
+            pool::set_paused(&admin, &mut pool, true);
+            ika_policy::consume_approval(&cap, &pool, &queue, &mut approval, test_scenario::ctx(&mut scenario));
+
+            test_scenario::return_to_sender(&scenario, cap);
+            test_scenario::return_to_sender(&scenario, admin);
+            test_scenario::return_shared(pool);
+            test_scenario::return_shared(queue);
+            test_scenario::return_shared(approval);
+        };
         test_scenario::end(scenario);
     }
 

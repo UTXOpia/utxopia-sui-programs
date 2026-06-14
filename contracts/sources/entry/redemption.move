@@ -22,6 +22,9 @@ module utxopia::redemption {
     /// frontrunner rewrite a queued redemption's fee cap (finding #5). Making it a constant
     /// removes the attacker-controlled parameter entirely.
     const MAX_FEE_SATS: u64 = 50_000;
+    /// Cap a request's miner fee at this fraction of its amount (here 1/4) so a dust
+    /// redemption can never burn a disproportionate share of pooled BTC as fees.
+    const MAX_FEE_AMOUNT_DIVISOR: u64 = 4;
     public struct RedemptionCap has key {
         id: UID,
         queue_id: ID,
@@ -315,6 +318,10 @@ module utxopia::redemption {
     ): u64 {
         assert!(amount_sats > 0, errors::invalid_redemption());
         assert!(vector::length(&btc_script) > 0, errors::invalid_redemption());
+        // Bound the per-request fee cap to a fraction of the amount so the actual miner fee
+        // (enforced <= max_fee_sats at completion) can't drain pooled BTC on a dust redemption.
+        let fee_ceiling = amount_sats / MAX_FEE_AMOUNT_DIVISOR;
+        let max_fee_sats = if (max_fee_sats > fee_ceiling) { fee_ceiling } else { max_fee_sats };
         let redemption_id = pool::allocate_redemption_id(pool);
         let pool_id = pool::pool_id(pool);
         object_table::add(&mut queue.requests, redemption_id, RedemptionRequest {

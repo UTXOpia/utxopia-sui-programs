@@ -65,6 +65,9 @@ module utxopia::ika_policy {
         ctx: &TxContext,
     ) {
         redemption::assert_cap_for_queue(cap, queue);
+        // A pause must freeze the signing pipeline: an approval minted before the pause
+        // cannot be consumed (and thus signed by Ika) while the pool is paused.
+        pool::assert_not_paused(pool);
         assert!(!approval.used, errors::approval_used());
         assert!(approval.pool_id == pool::pool_id(pool), errors::policy_rejected());
         assert!(redemption::is_pending(queue, approval.redemption_id), errors::policy_rejected());

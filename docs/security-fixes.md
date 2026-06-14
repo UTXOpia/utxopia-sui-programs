@@ -63,7 +63,23 @@ miner-fee cap a protocol constant rather than a user input.
   validation. The `maxFeeSats`/`maxFeesSats` fields remain on the shared `RedemptionInput`
   interface (used by other chains) but are ignored on Sui.
 
-Deployment note: this is a breaking change to the Sui `redeem` entry signature (one fewer
-argument) — ship the Move package upgrade and the `sdk-sui` release together. Solana and the
-circuit are untouched. The `UTXOPIA_SUI_REDEEM_MAX_FEE_SATS` env knob in `regtest-flow.ts`
-is now a no-op.
+Deployment note: removing a parameter from the `public fun redeem` signature is an
+**upgrade-incompatible** change — Sui's on-chain upgrade policy rejects public-signature
+changes, so `sui client upgrade` cannot carry this. On **testnet** we therefore deploy a
+**fresh package at a new address** and re-initialize state rather than upgrade in place:
+
+1. `bun run scripts/deploy.ts` — publish the new package (new `packageId`, new `UpgradeCap`);
+   clears old shared-object refs from the state file.
+2. `bun run scripts/init.ts` — create pool, commitment tree, btc_deposit registry + utxo set,
+   nullifier registry, redemption queue, verifier registry, and bind their ids.
+3. `btc_light_client::initialize` — network-specific genesis/checkpoint bootstrap (re-anchor
+   + re-sync headers).
+4. `bun run scripts/register-vkey.ts` (+ token registry init / `register-sui`, and set the
+   BTC pool script).
+5. Repoint SDK/web config (`packageId` + shared-object ids) to the new deployment.
+6. Pause and abandon the old package (shared objects can't be deleted); sweep any custodied
+   BTC to the new pool's control first.
+
+Existing shielded notes / deposits / light-client state under the OLD package do not carry
+over (new package = new types). Acceptable on testnet. Solana and the circuit are untouched.
+The `UTXOPIA_SUI_REDEEM_MAX_FEE_SATS` env knob is now a no-op.

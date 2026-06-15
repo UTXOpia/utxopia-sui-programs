@@ -106,17 +106,26 @@ module utxopia::btc_deposit {
         let pool_script = pool::btc_pool_script(pool);
         let (found_out, credited, sweep_vout) = bitcoin::find_output_by_script(&sweep_raw_tx, &pool_script);
         assert!(found_out, errors::invalid_btc_deposit());
-        let amount_sats = bitcoin::output_value(&credited);
-        let deposit_vout = if (direct_to_pool) {
-            sweep_vout
+        // Resolve deposit_vout and amount_sats together.
+        // For direct_to_pool the deposit IS the sweep output; for the non-direct
+        // path we credit the deposit tx's own output value (not the first pool
+        // output of the sweep, which may aggregate multiple deposits in a batch).
+        let (deposit_vout, amount_sats) = if (direct_to_pool) {
+            (sweep_vout, bitcoin::output_value(&credited))
         } else {
-            let (found_d, _d_out, dvout) = bitcoin::find_deposit_output_with_vout(&deposit_tx_bytes);
+            let (found_d, d_out, dvout) = bitcoin::find_deposit_output_with_vout(&deposit_tx_bytes);
             assert!(found_d, errors::invalid_btc_deposit());
             assert!(
                 bitcoin::has_input_with_prev_outpoint(&sweep_raw_tx, &deposit_txid, dvout),
                 errors::deposit_linkage_failed(),
             );
-            dvout
+            let deposit_amount = bitcoin::output_value(&d_out);
+            // Conservative invariant: the sweep's matching pool output must pay
+            // exactly the deposit's output value.  This prevents over-crediting
+            // when the sweep consolidates many deposits and one pool output
+            // carries the combined total (1-deposit-1-matching-output rule).
+            assert!(bitcoin::output_value(&credited) == deposit_amount, errors::invalid_btc_deposit());
+            (dvout, deposit_amount)
         };
         assert!(amount_sats >= pool::min_deposit_sats(pool), errors::amount_too_small());
         assert!(amount_sats <= pool::max_deposit_sats(pool), errors::amount_too_large());

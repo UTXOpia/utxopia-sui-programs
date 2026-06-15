@@ -216,6 +216,162 @@ module utxopia::btc_deposit_tests {
         test_scenario::end(scenario);
     }
 
+    // ===================== Finding 2: deposit attribution =====================
+
+    // Build a separate (non-pool) deposit tx whose first spendable output carries
+    // `deposit_value` sats to a P2TR address (fill byte 0x44).  The OP_RETURN
+    // carries the pool + tree tag so the contract can locate it.
+    fun build_separate_deposit_tx(
+        pool: &Pool,
+        tree: &CommitmentTree,
+        deposit_value: u64,
+    ): vector<u8> {
+        // Input spends some coin (bytes32(0x55), vout 3) — arbitrary.
+        let mut tx = le32(1);
+        vector::append(&mut tx, vector[0x01u8]);    // 1 input
+        vector::append(&mut tx, bytes(32, 0x55));   // prev_txid
+        vector::append(&mut tx, le32(3));            // prev_vout
+        vector::append(&mut tx, vector[0x00u8]);     // empty scriptSig
+        vector::append(&mut tx, le32(0xffffffff));   // sequence
+        vector::append(&mut tx, vector[0x02u8]);     // 2 outputs
+        // vout 0: the value-bearing deposit output (NOT the pool script)
+        vector::append(&mut tx, le64(deposit_value));
+        let deposit_script = p2tr(0x44);
+        vector::append(&mut tx, vector[(vector::length(&deposit_script) as u8)]);
+        vector::append(&mut tx, deposit_script);
+        // vout 1: OP_RETURN with pool tag + keys
+        let or = op_return(pool, tree, 0x02, 0x01);
+        vector::append(&mut tx, le64(0));
+        vector::append(&mut tx, vector[(vector::length(&or) as u8)]);
+        vector::append(&mut tx, or);
+        vector::append(&mut tx, le32(0));            // locktime
+        tx
+    }
+
+    // Build a sweep tx that spends the given deposit outpoint (deposit_txid, deposit_vout)
+    // and pays `pool_output_value` sats to the pool script p2tr(0x22).
+    fun build_sweep_tx(
+        deposit_txid: vector<u8>,
+        deposit_vout: u32,
+        pool_output_value: u64,
+    ): vector<u8> {
+        let pool_script = p2tr(0x22);
+        let mut tx = le32(1);
+        vector::append(&mut tx, vector[0x01u8]);     // 1 input
+        vector::append(&mut tx, deposit_txid);
+        vector::append(&mut tx, le32(deposit_vout));
+        vector::append(&mut tx, vector[0x00u8]);     // empty scriptSig
+        vector::append(&mut tx, le32(0xffffffff));   // sequence
+        vector::append(&mut tx, vector[0x01u8]);     // 1 output: pool
+        vector::append(&mut tx, le64(pool_output_value));
+        vector::append(&mut tx, vector[(vector::length(&pool_script) as u8)]);
+        vector::append(&mut tx, pool_script);
+        vector::append(&mut tx, le32(0));            // locktime
+        tx
+    }
+
+    // Non-direct deposit: credited amount must equal the deposit tx's OWN output
+    // value (30,000 sats), not an unrelated or larger pool-output value.
+    #[test]
+    fun credits_deposit_own_output_value_not_first_pool_output() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        bind(&scenario, &mut pool, &tree, &registry, &utxo_set, &light);
+
+        let deposit_value: u64 = 30_000;
+        let deposit_tx = build_separate_deposit_tx(&pool, &tree, deposit_value);
+        let deposit_txid = lc::test_double_sha256(deposit_tx);
+        // deposit output is vout 0 (first non-OP_RETURN output)
+        let deposit_vout: u32 = 0;
+
+        // Sweep pays EXACTLY deposit_value to the pool script — satisfies invariant.
+        let sweep_tx = build_sweep_tx(deposit_txid, deposit_vout, deposit_value);
+        let sweep_txid = lc::test_double_sha256(sweep_tx);
+
+        // Mine the sweep tx into a block.
+        let g = lc::tip_hash(&light);
+        let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
+        lc::submit_headers(&mut light, block, &clk);
+        let block_hash = lc::test_double_sha256(block);
+
+        let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        btc_deposit::complete_deposit(
+            &mut pool, &mut registry, &mut utxo_set, &mut tree,
+            inclusion, sweep_tx, deposit_tx, false, vector[],
+            test_scenario::ctx(&mut scenario),
+        );
+
+        // Credited shielded amount = deposit_value (fee bps/service default 0).
+        assert!(pool::total_shielded(&pool) == (deposit_value as u128), 0);
+        assert!(pool::deposit_count(&pool) == 1, 1);
+        // Deduplicated on the deposit outpoint.
+        assert!(btc_deposit::is_claimed(&registry, deposit_txid, deposit_vout), 2);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(registry);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
+    // Conservative invariant: if the sweep's pool output value DIFFERS from the
+    // deposit's output value, complete_deposit must abort (invalid_btc_deposit=14).
+    #[test, expected_failure(abort_code = 14)]
+    fun rejects_sweep_pool_output_mismatch() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let mut registry = test_scenario::take_shared<BtcDepositRegistry>(&scenario);
+        let mut utxo_set = test_scenario::take_shared<UtxoSet>(&scenario);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        bind(&scenario, &mut pool, &tree, &registry, &utxo_set, &light);
+
+        let deposit_value: u64 = 30_000;
+        let deposit_tx = build_separate_deposit_tx(&pool, &tree, deposit_value);
+        let deposit_txid = lc::test_double_sha256(deposit_tx);
+        let deposit_vout: u32 = 0;
+
+        // Sweep pool output carries 50,000 — does NOT match deposit's 30,000.
+        // In a batched sweep this would over-credit the user.
+        let sweep_tx = build_sweep_tx(deposit_txid, deposit_vout, 50_000);
+        let sweep_txid = lc::test_double_sha256(sweep_tx);
+
+        let g = lc::tip_hash(&light);
+        let block = make_header(g, sweep_txid, 1001, REGTEST_BITS, 1);
+        lc::submit_headers(&mut light, block, &clk);
+        let block_hash = lc::test_double_sha256(block);
+
+        let inclusion = lc::verify_tx_inclusion(&light, block_hash, sweep_txid, 0, vector[], 0);
+        // must abort: invalid_btc_deposit (14)
+        btc_deposit::complete_deposit(
+            &mut pool, &mut registry, &mut utxo_set, &mut tree,
+            inclusion, sweep_tx, deposit_tx, false, vector[],
+            test_scenario::ctx(&mut scenario),
+        );
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(registry);
+        test_scenario::return_shared(utxo_set);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
     // ===================== permissioned pool tests (AuditorCap model) =====================
 
     fun setup_permissioned(scenario: &mut test_scenario::Scenario) {

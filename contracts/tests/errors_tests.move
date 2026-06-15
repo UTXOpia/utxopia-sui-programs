@@ -47,5 +47,6 @@ module utxopia::errors_tests {
         assert!(errors::already_bound() == 41, 0);
         assert!(errors::no_pending_proposal() == 42, 0);
         assert!(errors::timelock_not_elapsed() == 43, 0);
+        assert!(errors::reorg_below_finalized() == 57, 0);
     }
 }

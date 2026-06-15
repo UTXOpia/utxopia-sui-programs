@@ -65,6 +65,26 @@ export interface UtxopiaSuiState {
   redemptionQueue?: SuiSharedObjectRef;
   redemptionCap?: SuiObjectRef;
   verifyingKeyRegistry?: SuiSharedObjectRef;
+  // Permissioned pools created via scripts/init-permissioned.ts. Each entry is a
+  // fully self-contained pool (its own AdminCap + AuditorCap + full companion set),
+  // independent of the canonical single-pool fields above. Backward-compatible:
+  // legacy state files simply omit this array.
+  pools?: Array<{
+    poolId: string;
+    adminCapId: string;
+    auditorCapId: string;
+    auditor: string;
+    auditorViewingPubkey?: string;
+    commitmentTreeId: string;
+    nullifierRegistryId: string;
+    btcDepositRegistryId: string;
+    utxoSetId: string;
+    vkRegistryId: string;
+    redemptionQueueId: string;
+    treeDepth: number;
+    permissioned: true;
+    createdAt: string;
+  }>;
   tokenRegistry?: SuiSharedObjectRef;
   registeredTokens?: Record<string, {
     coinType: string;
@@ -172,4 +192,9 @@ export function sharedRefFromChange(change: any): SuiSharedObjectRef | undefined
 
 export function findCreatedObject(changes: any[], typeSuffix: string) {
   return changes.find((change) => change.type === "created" && typeof change.objectType === "string" && change.objectType.endsWith(typeSuffix));
+}
+
+/** Capture the AuditorCap minted by `pool::initialize_permissioned` (transferred to the auditor). */
+export function findCreatedAuditorCap(changes: any[]) {
+  return findCreatedObject(changes, "::pool::AuditorCap");
 }

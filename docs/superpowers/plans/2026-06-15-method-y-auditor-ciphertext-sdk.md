@@ -203,3 +203,17 @@ IMPORTANT for the implementer: use the SDK's ACTUAL X25519 helpers. Confirm the 
 - **No contract changes.** Solana `EVENT_AUDITOR_CIPHERTEXT` (0x16) and Sui `auditor_ciphertext: vector<u8>` already carry the opaque blob; the program never parses it. This plan is entirely in `utxopia/sdk`.
 - **Curve:** match the existing viewing-key curve (Ed25519 keys, X25519 ECDH). Reuse `crypto-ed25519.ts` helpers; add `ed25519PrivToX25519`/`x25519PubFromPriv` only if missing.
 - **Forward secrecy / replay:** a fresh ephemeral per note + fresh nonce; AAD-commitment binding prevents moving a blob to a different note.
+
+---
+
+## Implemented (2026-06-15)
+
+Landed on `utxopia/sdk` `main` (ff-merge `e607541..fc2ae14`), 743 tests pass, security review APPROVE.
+- `auditor-ciphertext.ts` — `encryptAuditorCiphertext`/`decryptAuditorCiphertext` (X25519 ECDH + XChaCha20-Poly1305, AAD=commitment, domain `utxopia.auditor-ciphertext.v1`, 112-byte blob), `buildAuditorCiphertextForNote`. `crypto-ed25519.ts` gained `ed25519PrivToX25519`/`x25519PubFromPriv`/`x25519EcdhRaw`.
+- `keys.ts` — `generate/deriveAuditorViewingKeypair`.
+- `events.ts` — `EVENT_AUDITOR_CIPHERTEXT` (0x16) + `parseAuditorCiphertextEvent` + `auditorCiphertextFromSuiEventFields`.
+- `auditor.ts` — `auditScan` consumes `auditorCiphertexts` + `auditorViewingPrivKey` → `AUDITOR_VISIBLE` records.
+- Permissioned builders (Solana `instructions.ts` + Sui `sui-adapter.ts`) accept either raw bytes or `{auditorViewingPubKey,tokenId,amount,commitment}`.
+- E2E test (`method-y-e2e.test.ts`): encode→emit→parse→decrypt across both chains.
+
+No contract changes (the on-chain `auditor_ciphertext` plumbing was already present from the permissioned-pool work).

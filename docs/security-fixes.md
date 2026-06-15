@@ -1,3 +1,27 @@
+# Second audit (Solana-parity scan, 2026-06-15)
+
+Full-codebase Move audit cross-mapped to the Solana program's audit surfaces.
+
+## Applied on-chain (with tests)
+
+| Severity | Fix | Location |
+|----------|-----|----------|
+| **HIGH** | **Signing-approval sighash binding.** `ika_policy::approve_signing` no longer trusts an opaque caller-supplied `sighash`. It now reconstructs the redemption tx from validated state (reserved UTXOs as inputs, recipient `btc_script`/`amount_sats` as output[0], change-to-pool as output[1] iff `> 330` sats) and recomputes the BIP-341 taproot key-spend sighash for `input_index`, asserting it equals the supplied value. Mirrors Solana `approve_redemption_signing`. Closes the custody-drain oracle where a `RedemptionCap` holder could have the dWallet sign an arbitrary BTC tx. | new `lib/sighash.move`, `entry/ika_policy.move`, getters in `entry/redemption.move` + `entry/btc_deposit.move` |
+
+- `lib/sighash.move` is a byte-for-byte port of the Solana program's `utils/sighash.rs::taproot_keyspend_preimage`; `tests/sighash_tests.move` reproduces Solana's rust-bitcoin ground-truth vectors exactly (both input indices + the `TapSighash` tag).
+- `tests/ika_policy_tests.move` adds `rejects_tampered_sighash` and `rejects_unprocessed_request`.
+- **Determinism contract** (already satisfied by the backend builder, written for Solana): nVersion=2, nLockTime=0, per-input nSequence=0xFFFF_FFFD, inputs ordered amount-DESC/txid-ASC/vout-ASC all spending the pool taproot scriptPubKey, one approval per input.
+- **SDK**: `sdk-sui/src/sui-adapter.ts::buildIkaApprovalTransaction` now passes the `UtxoSet` shared object and an `inputIndex` arg. **Upgrade-incompatible** (public-signature change) — same fresh-deploy + re-init procedure as finding #5 below.
+
+## Open (not yet applied — flagged for triage)
+
+- **MEDIUM — light-client finality floor** (`entry/btc_light_client.move:199-243`): reorgs are not rejected when their fork point is at/below `finalized_height`; that field only advances and never gates a reorg. A deep reorg (cheap on testnet4/regtest min-difficulty) can revert a credited deposit. Fix: `assert parent.height >= finalized_height`, and/or gate `complete_deposit` on `rec.height <= finalized_height`.
+- **MEDIUM — deposit amount attribution** (`entry/btc_deposit.move:73-104`): credited amount is the first pool-script sweep output, not bound to the linked deposit's value; safe only under the unenforced "1 deposit → 1 pool output per sweep" assumption.
+- **MEDIUM — `execute_deposit_config_update`** (`entry/pool.move:109`): permissionless (no `AdminCap`), defeating `cancel_deposit_config_update`. Add `&AdminCap`.
+- **LOW**: nullifier canonicality enforced by caller not at insertion; `vk_hash` is an admin label not derived from VK bytes (silent key-swap under `AdminCap`); transfer-path `stealth_data` length/segmentation unbound (event griefing only).
+
+---
+
 # Security scan follow-ups (sui-first-scan)
 
 Source: AI security scan (`sui-first-scan.json`, 35 findings). Each actionable finding was

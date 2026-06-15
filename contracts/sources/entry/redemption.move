@@ -280,6 +280,18 @@ module utxopia::redemption {
     public(package) fun request_btc_script(queue: &RedemptionQueue, redemption_id: u64): vector<u8> {
         borrow_request(queue, redemption_id).btc_script
     }
+    public(package) fun request_is_processing(queue: &RedemptionQueue, redemption_id: u64): bool {
+        borrow_request(queue, redemption_id).processing
+    }
+    public(package) fun request_total_input_sats(queue: &RedemptionQueue, redemption_id: u64): u64 {
+        borrow_request(queue, redemption_id).total_input_sats
+    }
+    public(package) fun request_selected_txids(queue: &RedemptionQueue, redemption_id: u64): vector<vector<u8>> {
+        borrow_request(queue, redemption_id).selected_txids
+    }
+    public(package) fun request_selected_vouts(queue: &RedemptionQueue, redemption_id: u64): vector<u32> {
+        borrow_request(queue, redemption_id).selected_vouts
+    }
     fun borrow_request(queue: &RedemptionQueue, redemption_id: u64): &RedemptionRequest {
         assert!(object_table::contains(&queue.requests, redemption_id), errors::invalid_redemption());
         object_table::borrow(&queue.requests, redemption_id)

@@ -121,6 +121,23 @@ module utxopia::btc_deposit {
     public fun contains_utxo(utxo_set: &UtxoSet, txid: vector<u8>, vout: u32): bool {
         object_table::contains(&utxo_set.utxos, outpoint_key(&txid, vout))
     }
+    /// Amount (sats) of a reserved pool UTXO. Asserts the outpoint exists, is
+    /// owned by `pool_id`, and is RESERVED (i.e. selected by `mark_processing`).
+    /// Used by the signing-approval gate to reconstruct the redemption tx's
+    /// per-input amounts when binding the dWallet sighash.
+    public(package) fun reserved_utxo_amount(
+        utxo_set: &UtxoSet,
+        pool_id: address,
+        txid: &vector<u8>,
+        vout: u32,
+    ): u64 {
+        let key = outpoint_key(txid, vout);
+        assert!(object_table::contains(&utxo_set.utxos, key), errors::invalid_redemption());
+        let record = object_table::borrow(&utxo_set.utxos, key);
+        assert!(record.pool_id == pool_id, errors::invalid_redemption());
+        assert!(record.status == UTXO_RESERVED, errors::invalid_redemption());
+        record.amount_sats
+    }
     #[test_only]
     public fun test_add_utxo(
         utxo_set: &mut UtxoSet,

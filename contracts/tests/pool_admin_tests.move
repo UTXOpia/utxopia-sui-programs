@@ -4,7 +4,8 @@ module utxopia::pool_admin_tests {
     use sui::object;
     use sui::test_scenario;
     use utxopia::commitment_tree::{Self, CommitmentTree};
-    use utxopia::pool::{Self, AdminCap, Pool};
+    use std::option;
+    use utxopia::pool::{Self, AdminCap, AuditorCap, Pool};
 
     const SENDER: address = @0xA11CE;
     const TIMELOCK_DELAY_MS: u64 = 172_800_000;
@@ -152,4 +153,55 @@ module utxopia::pool_admin_tests {
         test_scenario::return_shared(pool);
         test_scenario::end(scenario);
     }
+
+    #[test]
+    fun auditor_sets_root_freeze_and_viewing_key() {
+        let mut scenario = test_scenario::begin(@0xA11CE);
+        pool::initialize_permissioned(16, @0xAD17, test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, @0xAD17);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let cap = test_scenario::take_from_sender<AuditorCap>(&scenario);
+
+        assert!(pool::is_permissioned(&pool), 0);
+        pool::set_auditor_frozen(&cap, &mut pool, true);
+        assert!(pool::auditor_is_frozen(&pool), 1);
+        pool::set_auditor_viewing_pubkey(&cap, &mut pool, b"vk-bytes");
+        assert!(option::is_some(&pool::auditor_viewing_pubkey(&pool)), 2);
+
+        test_scenario::return_to_sender(&scenario, cap);
+        test_scenario::return_shared(pool);
+        test_scenario::end(scenario);
+    }
+
+    #[test]
+    fun rotate_commitment_tree_permissioned_rebinds() {
+        let mut scenario = test_scenario::begin(SENDER);
+        pool::initialize_permissioned(16, @0xAD17, test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let admin = test_scenario::take_from_sender<AdminCap>(&scenario);
+
+        let mut old_tree = commitment_tree::test_new(test_scenario::ctx(&mut scenario)); // number 0
+        let new_tree = commitment_tree::test_new_with_number(1, test_scenario::ctx(&mut scenario));
+        commitment_tree::test_set_next_index(&mut old_tree, MAX_LEAVES); // fill it
+
+        pool::set_commitment_tree_id(&admin, &mut pool, object::id(&old_tree));
+        test_scenario::return_to_sender(&scenario, admin);
+        test_scenario::next_tx(&mut scenario, @0xAD17);
+
+        let auditor_cap = test_scenario::take_from_sender<AuditorCap>(&scenario);
+        pool::rotate_commitment_tree_permissioned(&auditor_cap, &mut pool, &old_tree, &new_tree);
+
+        // Pool is now bound to the successor, not the old full tree.
+        pool::assert_commitment_tree(&pool, object::id(&new_tree));
+
+        commitment_tree::test_destroy(old_tree);
+        commitment_tree::test_destroy(new_tree);
+        test_scenario::return_to_sender(&scenario, auditor_cap);
+        test_scenario::return_shared(pool);
+        test_scenario::end(scenario);
+    }
+
 }

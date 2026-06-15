@@ -8,7 +8,7 @@ module utxopia::token_registry_tests {
     use utxopia::bound_params;
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::nullifier::{Self, NullifierRegistry};
-    use utxopia::pool::{Self, AdminCap, Pool};
+    use utxopia::pool::{Self, AdminCap, AuditorCap, Pool};
     use utxopia::token_registry::{Self, TokenRegistry};
     use utxopia::verifier::{Self, VerifyingKeyRegistry};
 
@@ -138,6 +138,7 @@ module utxopia::token_registry_tests {
             bytes(33, 0x02),
             coin,
             &clk,
+            vector[],
         );
 
         assert!(token_registry::fee_value<SUI>(&registry) == 10_000, 0);
@@ -174,7 +175,7 @@ module utxopia::token_registry_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(500, test_scenario::ctx(&mut scenario));
 
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -202,7 +203,7 @@ module utxopia::token_registry_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(20_000, test_scenario::ctx(&mut scenario));
 
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -231,7 +232,7 @@ module utxopia::token_registry_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(2_000, test_scenario::ctx(&mut scenario));
 
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -260,7 +261,7 @@ module utxopia::token_registry_tests {
 
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(1_000, test_scenario::ctx(&mut scenario));
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);
@@ -290,7 +291,7 @@ module utxopia::token_registry_tests {
         token_registry::test_register_token<SUI>(&mut registry, 9, 1, 2_000_000, 10_000_000, 100);
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         let fee_before = token_registry::fee_value<SUI>(&registry);
         assert!(token_registry::vault_value<SUI>(&registry) == 990_000, 0);
@@ -345,7 +346,7 @@ module utxopia::token_registry_tests {
         token_registry::test_register_token<SUI>(&mut registry, 9, 1, 2_000_000, 10_000_000, 100);
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let coin = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), coin, &clk, vector[]);
 
         let token_id = token_registry::token_id<SUI>(&registry);
         // Burn commitment for 400_000 but amount claimed 500_000 -> mismatch (E_INVALID_COMMITMENT=3).
@@ -389,11 +390,11 @@ module utxopia::token_registry_tests {
 
         // Two shields, then one unshield; the invariant holds at every step.
         let c1 = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), c1, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x07), bytes(33, 0x02), c1, &clk, vector[]);
         assert!(token_registry::token_total_shielded<SUI>(&registry) == token_registry::vault_value<SUI>(&registry), 0);
 
         let c2 = coin::mint_for_testing<SUI>(2_500_000, test_scenario::ctx(&mut scenario));
-        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x09), bytes(33, 0x02), c2, &clk);
+        token_registry::shield<SUI>(&pool, &mut registry, &mut tree, bytes(32, 0x09), bytes(33, 0x02), c2, &clk, vector[]);
         assert!(token_registry::token_total_shielded<SUI>(&registry) == 3_500_000, 1);
         assert!(token_registry::token_total_shielded<SUI>(&registry) == token_registry::vault_value<SUI>(&registry), 2);
 
@@ -415,6 +416,153 @@ module utxopia::token_registry_tests {
         token_registry::test_register_token<OTHER>(&mut registry, 6, 1, 5_000_000, 100_000_000, 0);
         assert!(token_registry::vault_value<OTHER>(&registry) == 0, 5);
         assert!(token_registry::token_total_shielded<OTHER>(&registry) == 0, 6);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(registry);
+        test_scenario::end(scenario);
+    }
+
+    // ---- permissioned shield tests (AuditorCap model) ----
+
+    const AUDITOR: address = @0xAD17;
+
+    fun setup_permissioned(scenario: &mut test_scenario::Scenario) {
+        pool::initialize_permissioned(16, AUDITOR, test_scenario::ctx(scenario));
+        commitment_tree::initialize(test_scenario::ctx(scenario));
+        nullifier::initialize_registry(test_scenario::ctx(scenario));
+        verifier::initialize_registry(test_scenario::ctx(scenario));
+        token_registry::initialize_registry(test_scenario::ctx(scenario));
+    }
+
+    #[test]
+    fun permissioned_shield_via_auditor_succeeds() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup_permissioned(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut registry = test_scenario::take_shared<TokenRegistry>(&scenario);
+        bind(&scenario, &mut pool, &tree, &nullifiers, &vk_registry, &registry);
+
+        token_registry::test_register_token<SUI>(&mut registry, 9, 1, 2_000_000, 10_000_000, 100);
+
+        test_scenario::next_tx(&mut scenario, AUDITOR);
+        let auditor_cap = test_scenario::take_from_sender<AuditorCap>(&scenario);
+
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let coin = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
+
+        token_registry::shield_permissioned<SUI>(
+            &auditor_cap,
+            &pool,
+            &mut registry,
+            &mut tree,
+            bytes(32, 0x07),
+            bytes(33, 0x02),
+            coin,
+            &clk,
+            vector[],
+        );
+
+        assert!(token_registry::fee_value<SUI>(&registry) == 10_000, 0);
+        assert!(token_registry::vault_value<SUI>(&registry) == 990_000, 1);
+        assert!(token_registry::token_total_shielded<SUI>(&registry) == 990_000, 2);
+        assert!(commitment_tree::next_index(&tree) == 1, 3);
+
+        test_scenario::return_to_address(AUDITOR, auditor_cap);
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(registry);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 54)]
+    fun permissioned_shield_rejects_when_frozen() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup_permissioned(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut registry = test_scenario::take_shared<TokenRegistry>(&scenario);
+        bind(&scenario, &mut pool, &tree, &nullifiers, &vk_registry, &registry);
+
+        token_registry::test_register_token<SUI>(&mut registry, 9, 1, 2_000_000, 10_000_000, 100);
+
+        test_scenario::next_tx(&mut scenario, AUDITOR);
+        let auditor_cap = test_scenario::take_from_sender<AuditorCap>(&scenario);
+        pool::set_auditor_frozen(&auditor_cap, &mut pool, true);
+
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let coin = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
+
+        // frozen -> auditor_frozen (54)
+        token_registry::shield_permissioned<SUI>(
+            &auditor_cap,
+            &pool,
+            &mut registry,
+            &mut tree,
+            bytes(32, 0x07),
+            bytes(33, 0x02),
+            coin,
+            &clk,
+            vector[],
+        );
+
+        test_scenario::return_to_sender(&scenario, auditor_cap);
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(tree);
+        test_scenario::return_shared(nullifiers);
+        test_scenario::return_shared(vk_registry);
+        test_scenario::return_shared(registry);
+        test_scenario::end(scenario);
+    }
+
+    #[test, expected_failure(abort_code = 56)]
+    fun permissioned_shield_rejects_public_entry() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup_permissioned(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut tree = test_scenario::take_shared<CommitmentTree>(&scenario);
+        let nullifiers = test_scenario::take_shared<NullifierRegistry>(&scenario);
+        let vk_registry = test_scenario::take_shared<VerifyingKeyRegistry>(&scenario);
+        let mut registry = test_scenario::take_shared<TokenRegistry>(&scenario);
+        bind(&scenario, &mut pool, &tree, &nullifiers, &vk_registry, &registry);
+
+        token_registry::test_register_token<SUI>(&mut registry, 9, 1, 2_000_000, 10_000_000, 100);
+
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let coin = coin::mint_for_testing<SUI>(1_000_000, test_scenario::ctx(&mut scenario));
+
+        // permissioned pool via public shield -> not_permissioned (56)
+        token_registry::shield<SUI>(
+            &pool,
+            &mut registry,
+            &mut tree,
+            bytes(32, 0x07),
+            bytes(33, 0x02),
+            coin,
+            &clk,
+            vector[],
+        );
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(pool);

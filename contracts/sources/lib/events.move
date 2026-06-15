@@ -9,6 +9,18 @@ module utxopia::events {
         pool_id: address,
         paused: bool,
     }
+    public struct PermissionedPoolCreated has copy, drop {
+        pool_id: address,
+        auditor: address,
+    }
+    public struct AuditorFrozen has copy, drop {
+        pool_id: address,
+        frozen: bool,
+    }
+    public struct AuditorViewingPubkeyUpdated has copy, drop {
+        pool_id: address,
+        pubkey: vector<u8>,
+    }
     public struct CommitmentInserted has copy, drop {
         pool_id: address,
         leaf_index: u64,
@@ -29,6 +41,7 @@ module utxopia::events {
         ephemeral_pubkey: vector<u8>,
         note_public_key: vector<u8>,
         commitment: vector<u8>,
+        auditor_ciphertext: vector<u8>,
     }
     public struct MerkleRootUpdated has copy, drop {
         pool_id: address,
@@ -83,6 +96,7 @@ module utxopia::events {
         commitment: vector<u8>,
         leaf_index: u64,
         token_id: u256,
+        auditor_ciphertext: vector<u8>,
     }
     public struct HeadersSubmitted has copy, drop {
         light_client_id: address,
@@ -97,6 +111,15 @@ module utxopia::events {
     public(package) fun pool_paused(pool_id: address, paused: bool) {
         event::emit(PoolPaused { pool_id, paused });
     }
+    public(package) fun permissioned_pool_created(pool_id: address, auditor: address) {
+        event::emit(PermissionedPoolCreated { pool_id, auditor })
+    }
+    public(package) fun auditor_frozen(pool_id: address, frozen: bool) {
+        event::emit(AuditorFrozen { pool_id, frozen })
+    }
+    public(package) fun auditor_viewing_pubkey_updated(pool_id: address, pubkey: vector<u8>) {
+        event::emit(AuditorViewingPubkeyUpdated { pool_id, pubkey })
+    }
     public(package) fun commitment_inserted(pool_id: address, leaf_index: u64, commitment: vector<u8>) {
         event::emit(CommitmentInserted { pool_id, leaf_index, commitment });
     }
@@ -109,6 +132,7 @@ module utxopia::events {
         ephemeral_pubkey: vector<u8>,
         note_public_key: vector<u8>,
         commitment: vector<u8>,
+        auditor_ciphertext: vector<u8>,
     ) {
         event::emit(BtcDepositVerified {
             pool_id,
@@ -119,6 +143,7 @@ module utxopia::events {
             ephemeral_pubkey,
             note_public_key,
             commitment,
+            auditor_ciphertext,
         });
     }
     public(package) fun commitment_tree_rotated(
@@ -214,6 +239,7 @@ module utxopia::events {
         commitment: vector<u8>,
         leaf_index: u64,
         token_id: u256,
+        auditor_ciphertext: vector<u8>,
     ) {
         event::emit(StealthAnnounced {
             pool_id,
@@ -223,6 +249,7 @@ module utxopia::events {
             commitment,
             leaf_index,
             token_id,
+            auditor_ciphertext,
         });
     }
     public(package) fun headers_submitted(

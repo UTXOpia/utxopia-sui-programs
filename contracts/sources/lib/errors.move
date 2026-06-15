@@ -51,6 +51,9 @@ module utxopia::errors {
     const E_TREE_NOT_FULL: u64 = 50;
     const E_INVALID_TREE_ROTATION: u64 = 51;
     const E_TIMESTAMP_TOO_FAR: u64 = 52;
+    const E_AUDITOR_FROZEN: u64 = 54;
+    const E_WRONG_AUDITOR_CAP: u64 = 55;
+    const E_NOT_PERMISSIONED: u64 = 56;
     public fun timestamp_too_far(): u64 { E_TIMESTAMP_TOO_FAR }
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -103,4 +106,7 @@ module utxopia::errors {
     public fun accounting_desync(): u64 { E_ACCOUNTING_DESYNC }
     public fun tree_not_full(): u64 { E_TREE_NOT_FULL }
     public fun invalid_tree_rotation(): u64 { E_INVALID_TREE_ROTATION }
+    public fun auditor_frozen(): u64 { E_AUDITOR_FROZEN }
+    public fun wrong_auditor_cap(): u64 { E_WRONG_AUDITOR_CAP }
+    public fun not_permissioned(): u64 { E_NOT_PERMISSIONED }
 }

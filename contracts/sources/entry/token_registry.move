@@ -12,7 +12,7 @@ module utxopia::token_registry {
     use utxopia::errors;
     use utxopia::events;
     use utxopia::nullifier::{Self, NullifierRegistry};
-    use utxopia::pool::{Self, AdminCap, Pool};
+    use utxopia::pool::{Self, AdminCap, Pool, AuditorCap};
     use utxopia::public_inputs;
     use utxopia::verifier::{Self, VerifyingKeyRegistry};
     const MAX_PUBLIC_OUTPUTS: u8 = 3;
@@ -82,6 +82,34 @@ module utxopia::token_registry {
         ephemeral_pub: vector<u8>,
         coin: Coin<T>,
         _clock: &Clock,
+        auditor_ciphertext: vector<u8>,
+    ) {
+        assert!(!pool::is_permissioned(pool), errors::not_permissioned());
+        shield_inner<T>(pool, registry, tree, npk, ephemeral_pub, coin, auditor_ciphertext);
+    }
+    public fun shield_permissioned<T>(
+        auditor_cap: &AuditorCap,
+        pool: &Pool,
+        registry: &mut TokenRegistry,
+        tree: &mut CommitmentTree,
+        npk: vector<u8>,
+        ephemeral_pub: vector<u8>,
+        coin: Coin<T>,
+        _clock: &Clock,
+        auditor_ciphertext: vector<u8>,
+    ) {
+        pool::assert_auditor(auditor_cap, pool);
+        assert!(!pool::auditor_is_frozen(pool), errors::auditor_frozen());
+        shield_inner<T>(pool, registry, tree, npk, ephemeral_pub, coin, auditor_ciphertext);
+    }
+    fun shield_inner<T>(
+        pool: &Pool,
+        registry: &mut TokenRegistry,
+        tree: &mut CommitmentTree,
+        npk: vector<u8>,
+        ephemeral_pub: vector<u8>,
+        coin: Coin<T>,
+        auditor_ciphertext: vector<u8>,
     ) {
         pool::assert_not_paused(pool);
         pool::assert_token_registry(pool, object::id(registry));
@@ -118,6 +146,7 @@ module utxopia::token_registry {
             commitment_be,
             leaf_index,
             token_id,
+            auditor_ciphertext,
         );
     }
     public fun unshield<T>(
@@ -202,6 +231,7 @@ module utxopia::token_registry {
                 commitments_out[j],
                 leaf_index,
                 token_id,
+                vector[],
             );
             j = j + 1;
         };

@@ -62,6 +62,7 @@ module utxopia::transact {
                     commitments_out[j],
                     leaf_index,
                     0u256,
+                    vector[],
                 );
             };
             j = j + 1;

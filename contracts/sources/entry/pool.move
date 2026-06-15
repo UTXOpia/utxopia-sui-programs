@@ -16,6 +16,10 @@ module utxopia::pool {
         id: UID,
         pool_id: ID,
     }
+    public struct AuditorCap has key {
+        id: UID,
+        pool_id: ID,
+    }
     public struct Pool has key {
         id: UID,
         tree_depth: u64,
@@ -42,10 +46,37 @@ module utxopia::pool {
         light_client_id: Option<ID>,
         token_registry_id: Option<ID>,
         btc_pool_script: Option<vector<u8>>,
+        permissioned: bool,
+        auditor_frozen: bool,
+        auditor_viewing_pubkey: Option<vector<u8>>,
     }
     public fun initialize(tree_depth: u64, ctx: &mut TxContext) {
         assert!(tree_depth > 0, errors::invalid_tree_depth());
-        let pool = Pool {
+        let pool = new_pool(tree_depth, false, ctx);
+        let pool_id = object::id(&pool);
+        events::pool_created(object::id_to_address(&pool_id), tree_depth, PROTOCOL_VERSION);
+        transfer::share_object(pool);
+        transfer::transfer(AdminCap { id: object::new(ctx), pool_id }, tx_context::sender(ctx));
+    }
+
+    /// Create a permissioned pool and hand the AuditorCap to `auditor`. The pool
+    /// also gets an AdminCap (to the sender) for protocol-parameter control; the
+    /// two capabilities are independent and non-overlapping. Deposits require the
+    /// auditor co-signature via AuditorCap (fail-closed).
+    public fun initialize_permissioned(tree_depth: u64, auditor: address, ctx: &mut TxContext) {
+        assert!(tree_depth > 0, errors::invalid_tree_depth());
+        let pool = new_pool(tree_depth, true, ctx);
+        let pool_id = object::id(&pool);
+        let pool_addr = object::id_to_address(&pool_id);
+        events::pool_created(pool_addr, tree_depth, PROTOCOL_VERSION);
+        events::permissioned_pool_created(pool_addr, auditor);
+        transfer::share_object(pool);
+        transfer::transfer(AdminCap { id: object::new(ctx), pool_id }, tx_context::sender(ctx));
+        transfer::transfer(AuditorCap { id: object::new(ctx), pool_id }, auditor);
+    }
+
+    fun new_pool(tree_depth: u64, permissioned: bool, ctx: &mut TxContext): Pool {
+        Pool {
             id: object::new(ctx),
             tree_depth,
             paused: false,
@@ -71,15 +102,22 @@ module utxopia::pool {
             light_client_id: option::none(),
             token_registry_id: option::none(),
             btc_pool_script: option::none(),
-        };
-        let pool_id = object::id(&pool);
-        events::pool_created(object::id_to_address(&pool_id), tree_depth, PROTOCOL_VERSION);
-        transfer::share_object(pool);
-        transfer::transfer(AdminCap { id: object::new(ctx), pool_id }, tx_context::sender(ctx));
+            permissioned,
+            auditor_frozen: false,
+            auditor_viewing_pubkey: option::none(),
+        }
     }
+
     public(package) fun assert_admin(cap: &AdminCap, pool: &Pool) {
         assert!(cap.pool_id == object::id(pool), errors::wrong_cap());
     }
+    public(package) fun assert_auditor(cap: &AuditorCap, pool: &Pool) {
+        assert!(pool.permissioned, errors::not_permissioned());
+        assert!(cap.pool_id == object::id(pool), errors::wrong_auditor_cap());
+    }
+    public fun is_permissioned(pool: &Pool): bool { pool.permissioned }
+    public fun auditor_is_frozen(pool: &Pool): bool { pool.auditor_frozen }
+    public fun auditor_viewing_pubkey(pool: &Pool): Option<vector<u8>> { pool.auditor_viewing_pubkey }
     public fun set_paused(cap: &AdminCap, pool: &mut Pool, paused: bool) {
         assert_admin(cap, pool);
         pool.paused = paused;
@@ -168,6 +206,16 @@ module utxopia::pool {
         assert!(vector::length(&script) > 0, errors::invalid_btc_deposit());
         pool.btc_pool_script = option::some(script);
     }
+    public fun set_auditor_frozen(cap: &AuditorCap, pool: &mut Pool, frozen: bool) {
+        assert_auditor(cap, pool);
+        pool.auditor_frozen = frozen;
+        events::auditor_frozen(object::uid_to_address(&pool.id), frozen);
+    }
+    public fun set_auditor_viewing_pubkey(cap: &AuditorCap, pool: &mut Pool, pubkey: vector<u8>) {
+        assert_auditor(cap, pool);
+        pool.auditor_viewing_pubkey = option::some(pubkey);
+        events::auditor_viewing_pubkey_updated(object::uid_to_address(&pool.id), pubkey);
+    }
     /// Rebind the pool from a full commitment tree to a fresh successor (minted via
     /// `commitment_tree::create_successor`). This is the rotation path that lets the pool
     /// keep accepting new notes past a single tree's 65,536-leaf capacity. Guarded so it
@@ -179,6 +227,28 @@ module utxopia::pool {
         new_tree: &CommitmentTree,
     ) {
         assert_admin(cap, pool);
+        rotate_commitment_tree_inner(pool, old_tree, new_tree);
+    }
+
+    /// Auditor-gated variant of commitment tree rotation. Performs the identical rotation
+    /// logic as the admin version but gated by `assert_auditor` (requires a permissioned pool).
+    public fun rotate_commitment_tree_permissioned(
+        cap: &AuditorCap,
+        pool: &mut Pool,
+        old_tree: &CommitmentTree,
+        new_tree: &CommitmentTree,
+    ) {
+        assert_auditor(cap, pool);
+        rotate_commitment_tree_inner(pool, old_tree, new_tree);
+    }
+
+    /// Shared rotation logic: validates old_tree is bound and full, validates new_tree is the
+    /// immediate empty successor, then rebinds the pool and emits the rotation event.
+    fun rotate_commitment_tree_inner(
+        pool: &mut Pool,
+        old_tree: &CommitmentTree,
+        new_tree: &CommitmentTree,
+    ) {
         // old_tree must be the tree currently bound to this pool, and it must be full.
         assert_commitment_tree(pool, object::id(old_tree));
         assert!(commitment_tree::is_full(old_tree), errors::tree_not_full());

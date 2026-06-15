@@ -12,7 +12,7 @@ module utxopia::btc_deposit {
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
     use utxopia::events;
-    use utxopia::pool::{Self, Pool};
+    use utxopia::pool::{Self, Pool, AuditorCap};
     const UTXO_UNSPENT: u8 = 0;
     const UTXO_RESERVED: u8 = 1;
     public struct BtcDepositRegistry has key {
@@ -51,6 +51,39 @@ module utxopia::btc_deposit {
         sweep_raw_tx: vector<u8>,
         deposit_raw_tx: vector<u8>,
         direct_to_pool: bool,
+        auditor_ciphertext: vector<u8>,
+        ctx: &mut TxContext,
+    ) {
+        assert!(!pool::is_permissioned(pool), errors::not_permissioned());
+        complete_deposit_inner(pool, registry, utxo_set, tree, inclusion, sweep_raw_tx, deposit_raw_tx, direct_to_pool, auditor_ciphertext, ctx);
+    }
+    public fun complete_deposit_permissioned(
+        auditor_cap: &AuditorCap,
+        pool: &mut Pool,
+        registry: &mut BtcDepositRegistry,
+        utxo_set: &mut UtxoSet,
+        tree: &mut CommitmentTree,
+        inclusion: VerifiedInclusion,
+        sweep_raw_tx: vector<u8>,
+        deposit_raw_tx: vector<u8>,
+        direct_to_pool: bool,
+        auditor_ciphertext: vector<u8>,
+        ctx: &mut TxContext,
+    ) {
+        pool::assert_auditor(auditor_cap, pool);
+        assert!(!pool::auditor_is_frozen(pool), errors::auditor_frozen());
+        complete_deposit_inner(pool, registry, utxo_set, tree, inclusion, sweep_raw_tx, deposit_raw_tx, direct_to_pool, auditor_ciphertext, ctx);
+    }
+    fun complete_deposit_inner(
+        pool: &mut Pool,
+        registry: &mut BtcDepositRegistry,
+        utxo_set: &mut UtxoSet,
+        tree: &mut CommitmentTree,
+        inclusion: VerifiedInclusion,
+        sweep_raw_tx: vector<u8>,
+        deposit_raw_tx: vector<u8>,
+        direct_to_pool: bool,
+        auditor_ciphertext: vector<u8>,
         ctx: &mut TxContext,
     ) {
         pool::assert_not_paused(pool);
@@ -69,6 +102,7 @@ module utxopia::btc_deposit {
         let (has_op_return, pool_tag, ephemeral_pubkey, note_public_key) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
         assert!(has_op_return, errors::invalid_stealth_op_return());
         assert!(pool_tag == expected_pool_tag(pool, tree), errors::invalid_stealth_op_return());
+        let note_public_key_field = commitment_tree::field_from_be_bytes(&note_public_key);
         let pool_script = pool::btc_pool_script(pool);
         let (found_out, credited, sweep_vout) = bitcoin::find_output_by_script(&sweep_raw_tx, &pool_script);
         assert!(found_out, errors::invalid_btc_deposit());
@@ -94,7 +128,6 @@ module utxopia::btc_deposit {
         assert!(!table::contains(&registry.claimed, claim_key), errors::btc_deposit_already_claimed());
         table::add(&mut registry.claimed, claim_key, true);
         registry.claimed_count = registry.claimed_count + 1;
-        let note_public_key_field = commitment_tree::field_from_be_bytes(&note_public_key);
         let commitment_u256 = poseidon::poseidon_bn254(
             &vector[note_public_key_field, pool::btc_token_id(pool), (shielded_amount as u256)],
         );
@@ -111,6 +144,7 @@ module utxopia::btc_deposit {
             ephemeral_pubkey,
             note_public_key,
             commitment_be,
+            auditor_ciphertext,
         );
         pool::record_deposit(pool, shielded_amount, amount_sats);
     }

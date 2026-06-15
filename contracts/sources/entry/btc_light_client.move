@@ -197,6 +197,10 @@ module utxopia::btc_light_client {
         let old_tip_height = lc.tip_height;
         let mut reorg = false;
         if (running_chainwork > lc.total_chainwork) {
+            // Reject reorgs whose fork point is strictly below finalized_height.
+            // A parent at finalized_height only rewrites heights finalized_height+1
+            // and above, so finalized blocks themselves remain canonical.
+            assert!(parent.height >= lc.finalized_height, errors::reorg_below_finalized());
             let mut k = 0;
             while (k < n) {
                 set_canonical_height(lc, parent.height + 1 + k, *vector::borrow(&hashes, k));
@@ -524,4 +528,54 @@ module utxopia::btc_light_client {
     }
     #[test_only]
     public fun test_max_target(): u256 { MAX_TARGET }
+    /// Initialize a REGTEST light client with a custom required_confirmations
+    /// value, allowing tests to exercise finality semantics that are not
+    /// reachable through the normal `initialize` entry (which always uses 1 for
+    /// non-mainnet networks).
+    #[test_only]
+    public fun test_initialize_with_confirmations(
+        genesis_raw_header: vector<u8>,
+        genesis_height: u64,
+        genesis_chainwork: u256,
+        genesis_expected_bits: u32,
+        genesis_epoch_start_time: u32,
+        required_confirmations: u64,
+        ctx: &mut TxContext,
+    ) {
+        assert!(vector::length(&genesis_raw_header) == HEADER_LEN, errors::bad_header_len());
+        let block_hash = double_sha256(&genesis_raw_header);
+        let mut lc = LightClient {
+            id: object::new(ctx),
+            network: NETWORK_REGTEST,
+            paused: false,
+            required_confirmations,
+            tip_hash: block_hash,
+            tip_height: genesis_height,
+            total_chainwork: genesis_chainwork,
+            finalized_height: saturating_sub(genesis_height, if (required_confirmations > 0) { required_confirmations - 1 } else { 0 }),
+            expected_bits: genesis_expected_bits,
+            epoch_start_time: genesis_epoch_start_time,
+            genesis_hash: block_hash,
+            header_count: 1,
+            last_update_ms: 0,
+        };
+        let record = HeaderRecord {
+            version: u32_le(&genesis_raw_header, 0),
+            prev_hash: slice_bytes(&genesis_raw_header, 4, 36),
+            merkle_root: slice_bytes(&genesis_raw_header, 36, 68),
+            timestamp: u32_le(&genesis_raw_header, 68),
+            bits: u32_le(&genesis_raw_header, 72),
+            nonce: u32_le(&genesis_raw_header, 76),
+            block_hash,
+            chainwork: genesis_chainwork,
+            height: genesis_height,
+            expected_bits: genesis_expected_bits,
+            epoch_start_time: genesis_epoch_start_time,
+        };
+        store_header(&mut lc, record);
+        set_canonical_height(&mut lc, genesis_height, block_hash);
+        let cap = LightClientAdminCap { id: object::new(ctx), light_client_id: object::id(&lc) };
+        transfer::transfer(cap, tx_context::sender(ctx));
+        transfer::share_object(lc);
+    }
 }

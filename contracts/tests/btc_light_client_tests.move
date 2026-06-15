@@ -129,8 +129,12 @@ module utxopia::btc_light_client_tests {
         test_scenario::end(scenario);
     }
 
-    #[test]
-    fun i_reorg_by_chainwork() {
+    // With required_confirmations=1 (REGTEST), every submitted block is immediately
+    // finalized (finalized_height == tip_height).  A heavier fork that roots at
+    // genesis (height 100) after chain A has reached tip 102 (finalized=102) forks
+    // BELOW finality and must be rejected — this is the audit finding being fixed.
+    #[test, expected_failure(abort_code = 57)]
+    fun i_reorg_below_finality_rejected() {
         let mut scenario = test_scenario::begin(SENDER);
         let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
         lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(&mut scenario));
@@ -140,7 +144,56 @@ module utxopia::btc_light_client_tests {
         let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
         let g = lc::tip_hash(&light);
 
-        // chain A: 2 blocks
+        // chain A: 2 blocks — finalized_height advances to 102 (req_conf=1)
+        let a1 = make_header(g, bytes32(11), 1001, REGTEST_BITS, 1);
+        let a1h = lc::test_double_sha256(a1);
+        let a2 = make_header(a1h, bytes32(12), 1002, REGTEST_BITS, 2);
+        let mut batch_a = a1;
+        vector::append(&mut batch_a, a2);
+        lc::submit_headers(&mut light, batch_a, &clk);
+        assert!(lc::tip_height(&light) == 102, 0);
+        assert!(lc::finalized_height(&light) == 102, 1);
+
+        // fork B: 3 heavier blocks from GENESIS (height 100 < finalized=102).
+        // This reorg would rewrite already-finalized history — must abort 57.
+        let b1 = make_header(g, bytes32(21), 1001, REGTEST_BITS, 11);
+        let b1h = lc::test_double_sha256(b1);
+        let b2 = make_header(b1h, bytes32(22), 1002, REGTEST_BITS, 12);
+        let b2h = lc::test_double_sha256(b2);
+        let b3 = make_header(b2h, bytes32(23), 1003, REGTEST_BITS, 13);
+        let mut batch_b = b1;
+        vector::append(&mut batch_b, b2);
+        vector::append(&mut batch_b, b3);
+        lc::submit_headers(&mut light, batch_b, &clk); // aborts: reorg_below_finalized (57)
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
+    // Verify that a heavier fork whose common ancestor is AT OR ABOVE finalized_height
+    // still succeeds — i.e. the fix does not regress legitimate shallow reorgs.
+    // Uses test_initialize_with_confirmations(req_conf=3) so that after 2 blocks
+    // finalized_height is still at genesis (100), leaving room for a reorg.
+    #[test]
+    fun i_reorg_shallow_above_finality() {
+        let mut scenario = test_scenario::begin(SENDER);
+        let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
+        // req_conf=3 → finalized_height = genesis_height - 2 = 98 initially.
+        lc::test_initialize_with_confirmations(
+            genesis, 100, 1000, REGTEST_BITS, 1000, 3,
+            test_scenario::ctx(&mut scenario),
+        );
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let g = lc::tip_hash(&light);
+
+        // finalized_height = saturating_sub(100, 2) = 98 after genesis.
+        assert!(lc::finalized_height(&light) == 98, 0);
+
+        // chain A: 2 blocks (tip=102, finalized = 102-2 = 100)
         let a1 = make_header(g, bytes32(11), 1001, REGTEST_BITS, 1);
         let a1h = lc::test_double_sha256(a1);
         let a2 = make_header(a1h, bytes32(12), 1002, REGTEST_BITS, 2);
@@ -148,10 +201,11 @@ module utxopia::btc_light_client_tests {
         let mut batch_a = a1;
         vector::append(&mut batch_a, a2);
         lc::submit_headers(&mut light, batch_a, &clk);
-        assert!(lc::tip_height(&light) == 102, 0);
-        assert!(lc::tip_hash(&light) == a2h, 1);
+        assert!(lc::tip_height(&light) == 102, 1);
+        assert!(lc::finalized_height(&light) == 100, 2);
 
-        // fork B: 3 blocks from genesis => more cumulative work => reorg
+        // fork B: 3 heavier blocks rooted at genesis (height 100 == finalized_height).
+        // parent.height (100) >= finalized_height (100) → ALLOWED.
         let b1 = make_header(g, bytes32(21), 1001, REGTEST_BITS, 11);
         let b1h = lc::test_double_sha256(b1);
         let b2 = make_header(b1h, bytes32(22), 1002, REGTEST_BITS, 12);
@@ -163,12 +217,13 @@ module utxopia::btc_light_client_tests {
         vector::append(&mut batch_b, b3);
         lc::submit_headers(&mut light, batch_b, &clk);
 
-        assert!(lc::tip_height(&light) == 103, 2);
-        assert!(lc::tip_hash(&light) == b3h, 3);
-        // A2 is orphaned: no longer canonical at its height
-        assert!(lc::confirmations(&light, a2h) == 0, 4);
-        assert!(lc::confirmations(&light, b3h) == 1, 5);
-        assert!(lc::confirmations(&light, g) == 4, 6); // genesis at 100, tip 103
+        assert!(lc::tip_height(&light) == 103, 3);
+        assert!(lc::tip_hash(&light) == b3h, 4);
+        // A chain is orphaned
+        assert!(lc::confirmations(&light, a2h) == 0, 5);
+        assert!(lc::confirmations(&light, b3h) == 1, 6);
+        // genesis is still canonical (4 confirmations: 100..103 inclusive)
+        assert!(lc::confirmations(&light, g) == 4, 7);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(light);

@@ -54,6 +54,7 @@ module utxopia::errors {
     const E_AUDITOR_FROZEN: u64 = 54;
     const E_WRONG_AUDITOR_CAP: u64 = 55;
     const E_NOT_PERMISSIONED: u64 = 56;
+    const E_REORG_BELOW_FINALIZED: u64 = 57;
     public fun timestamp_too_far(): u64 { E_TIMESTAMP_TOO_FAR }
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -109,4 +110,5 @@ module utxopia::errors {
     public fun auditor_frozen(): u64 { E_AUDITOR_FROZEN }
     public fun wrong_auditor_cap(): u64 { E_WRONG_AUDITOR_CAP }
     public fun not_permissioned(): u64 { E_NOT_PERMISSIONED }
+    public fun reorg_below_finalized(): u64 { E_REORG_BELOW_FINALIZED }
 }

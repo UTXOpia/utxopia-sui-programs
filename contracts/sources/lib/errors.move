@@ -55,6 +55,9 @@ module utxopia::errors {
     const E_WRONG_AUDITOR_CAP: u64 = 55;
     const E_NOT_PERMISSIONED: u64 = 56;
     const E_REORG_BELOW_FINALIZED: u64 = 57;
+    const E_TIMESTAMP_NOT_AFTER_MTP: u64 = 58;
+    const E_REGISTRY_ALREADY_OWNED: u64 = 59;
+    const E_INVALID_SCRIPT: u64 = 60;
     public fun timestamp_too_far(): u64 { E_TIMESTAMP_TOO_FAR }
     public fun pool_paused(): u64 { E_POOL_PAUSED }
     public fun invalid_tree_depth(): u64 { E_INVALID_TREE_DEPTH }
@@ -111,4 +114,7 @@ module utxopia::errors {
     public fun wrong_auditor_cap(): u64 { E_WRONG_AUDITOR_CAP }
     public fun not_permissioned(): u64 { E_NOT_PERMISSIONED }
     public fun reorg_below_finalized(): u64 { E_REORG_BELOW_FINALIZED }
+    public fun timestamp_not_after_mtp(): u64 { E_TIMESTAMP_NOT_AFTER_MTP }
+    public fun registry_already_owned(): u64 { E_REGISTRY_ALREADY_OWNED }
+    public fun invalid_script(): u64 { E_INVALID_SCRIPT }
 }

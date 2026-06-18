@@ -200,6 +200,36 @@ module utxopia::bitcoin {
         };
         (false, TxOutput { value: 0, script_pubkey: vector[] }, 0)
     }
+    /// True if `script` is one of the standard Bitcoin scriptPubKey templates the bridge
+    /// pays redemptions to: P2PKH, P2SH, P2WPKH, P2WSH, or P2TR. Rejecting non-standard
+    /// scripts collapses the re-partitioning space of a redeem proof replay: an attacker
+    /// can no longer split a valid scripts concatenation into pieces that hash identically
+    /// but decode to attacker-spendable outputs (e.g. a bare OP_TRUE) (audit MAJOR #4).
+    public(package) fun is_standard_scriptpubkey(script: &vector<u8>): bool {
+        let n = vector::length(script);
+        if (n == 22) {
+            // P2WPKH: OP_0 0x14 <20-byte hash>
+            *vector::borrow(script, 0) == 0x00 && *vector::borrow(script, 1) == 0x14
+        } else if (n == 34) {
+            // P2WSH: OP_0 0x20 <32>, or P2TR: OP_1 0x20 <32>
+            let v0 = *vector::borrow(script, 0);
+            (v0 == 0x00 || v0 == 0x51) && *vector::borrow(script, 1) == 0x20
+        } else if (n == 25) {
+            // P2PKH: OP_DUP OP_HASH160 0x14 <20> OP_EQUALVERIFY OP_CHECKSIG
+            *vector::borrow(script, 0) == 0x76
+                && *vector::borrow(script, 1) == 0xa9
+                && *vector::borrow(script, 2) == 0x14
+                && *vector::borrow(script, 23) == 0x88
+                && *vector::borrow(script, 24) == 0xac
+        } else if (n == 23) {
+            // P2SH: OP_HASH160 0x14 <20> OP_EQUAL
+            *vector::borrow(script, 0) == 0xa9
+                && *vector::borrow(script, 1) == 0x14
+                && *vector::borrow(script, 22) == 0x87
+        } else {
+            false
+        }
+    }
     public(package) fun sum_outputs(raw_tx: &vector<u8>): u64 {
         let outs = parse_outputs(raw_tx);
         let mut total = 0u64;

@@ -96,6 +96,7 @@ module utxopia::redemption {
         pool::assert_commitment_tree(pool, object::id(tree));
         pool::assert_nullifier_registry(pool, object::id(nullifiers));
         pool::assert_vk_registry(pool, object::id(vk_registry));
+        pool::assert_redemption_queue(pool, object::id(queue));
         assert!(n_public_outputs > 0, errors::invalid_redemption());
         assert!(n_public_outputs <= MAX_PUBLIC_REDEMPTIONS, errors::invalid_redemption());
         assert!(n_outputs >= n_public_outputs, errors::invalid_join_split());
@@ -110,7 +111,18 @@ module utxopia::redemption {
         public_inputs::assert_at(&public_inputs, 1, &bound_params_hash);
         assert_public_redeem_commitments(pool, n_tree_outputs, n_public_outputs, &commitments_out, &amounts_sats);
         let proof_root = public_inputs::extract(&public_inputs, 0);
-        assert!(commitment_tree::is_valid_root_bytes(tree, &proof_root), errors::stale_merkle_root());
+        // Accept the active tree's roots OR a root of a tree the pool rotated out of, so
+        // notes created before a rotation stay redeemable (audit CRITICAL #0).
+        assert!(
+            commitment_tree::is_valid_root_bytes(tree, &proof_root)
+                || pool::is_historical_root(pool, &proof_root),
+            errors::stale_merkle_root(),
+        );
+        // Reject a full tree before the expensive Groth16 verification (audit MINOR #16)
+        // when this redeem mints change/tree outputs that must be inserted.
+        if (n_tree_outputs > 0) {
+            assert!(!commitment_tree::is_full(tree), errors::tree_full());
+        };
         let verified = verifier::verify_join_split(
             vk_registry,
             n_inputs,
@@ -139,6 +151,10 @@ module utxopia::redemption {
             let amount_sats = *amounts_sats.borrow(k);
             assert!(amount_sats > 0, errors::invalid_redemption());
             assert!(btc_script.length() > 0, errors::invalid_redemption());
+            // Only standard scriptPubKeys may be queued as payout destinations. This blocks
+            // proof-replay attacks that re-partition the (concatenation-bound) scripts into
+            // attacker-spendable fragments (audit MAJOR #4).
+            assert!(bitcoin::is_standard_scriptpubkey(&btc_script), errors::invalid_script());
             total_redeemed = total_redeemed + (amount_sats as u128);
             // Protocol-set fee cap (see MAX_FEE_SATS) — not attacker-controllable.
             enqueue_redemption_request(pool, queue, btc_script, amount_sats, MAX_FEE_SATS, ctx);
@@ -158,6 +174,10 @@ module utxopia::redemption {
     ) {
         assert_cap(cap, queue);
         pool::assert_not_paused(pool);
+        // The queue must be the pool's authorized queue, not merely one the cap matches.
+        // Otherwise any user could reserve a victim pool's UTXOs through a queue they created
+        // (audit MAJOR #3).
+        pool::assert_redemption_queue(pool, object::id(queue));
         pool::assert_utxo_set(pool, object::id(utxo_set));
         let pool_id = pool::pool_id(pool);
         let request = borrow_request_mut(queue, redemption_id);
@@ -192,6 +212,7 @@ module utxopia::redemption {
         ctx: &mut TxContext,
     ) {
         assert_cap(cap, queue);
+        pool::assert_redemption_queue(pool, object::id(queue));
         pool::assert_utxo_set(pool, object::id(utxo_set));
         let pool_id = pool::pool_id(pool);
         let (btc_script, amount_sats, max_fee_sats, total_input_sats, selected_txids, selected_vouts) = {
@@ -263,6 +284,40 @@ module utxopia::redemption {
         };
         events::redemption_completed(pool_id, redemption_id, btc_txid);
         remove_request(queue, redemption_id, pool_id);
+    }
+    /// Release the UTXOs a processing redemption reserved, returning them to UNSPENT and
+    /// resetting the request so it can be re-processed. Recovers pool liquidity when a
+    /// redemption stalls between `mark_processing` and `complete_redemption` instead of
+    /// leaving the reserved outputs locked forever (audit MAJOR #3). Gated by the pool's
+    /// authorized queue cap; cannot run once the request is completed.
+    public fun abort_processing(
+        cap: &RedemptionCap,
+        pool: &Pool,
+        utxo_set: &mut UtxoSet,
+        queue: &mut RedemptionQueue,
+        redemption_id: u64,
+    ) {
+        assert_cap(cap, queue);
+        pool::assert_redemption_queue(pool, object::id(queue));
+        pool::assert_utxo_set(pool, object::id(utxo_set));
+        let pool_id = pool::pool_id(pool);
+        let (selected_txids, selected_vouts) = {
+            let request = borrow_request_mut(queue, redemption_id);
+            assert!(request.pool_id == pool_id, errors::invalid_redemption());
+            assert!(!request.completed, errors::redemption_completed());
+            assert!(request.processing, errors::invalid_redemption());
+            (request.selected_txids, request.selected_vouts)
+        };
+        let mut i = 0u64;
+        while (i < vector::length(&selected_txids)) {
+            btc_deposit::unreserve_utxo(utxo_set, pool_id, selected_txids[i], selected_vouts[i]);
+            i = i + 1;
+        };
+        let request = borrow_request_mut(queue, redemption_id);
+        request.processing = false;
+        request.total_input_sats = 0;
+        request.selected_txids = vector[];
+        request.selected_vouts = vector[];
     }
     public(package) fun is_pending(queue: &RedemptionQueue, redemption_id: u64): bool {
         let request = borrow_request(queue, redemption_id);

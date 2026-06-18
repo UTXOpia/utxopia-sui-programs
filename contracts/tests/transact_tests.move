@@ -44,7 +44,8 @@ module utxopia::transact_tests {
     #[test]
     fun transfer_hash_matches_sdk_vector() {
         let got = bound_params::test_transfer_hash(vector[bytes(72, 0x11)]);
-        let expected = x"00255687330aa6944333062dde58aef6c29c08f718af38804ab99d4616ada196";
+        // Length-prefixed stealth-data encoding (audit #51/#52/#54). Locked to the SDK.
+        let expected = x"089f78cb332df8a2af8c34e4bf4c8477daf60a38dd6eddd43b6161c4ff8ad9da";
         assert!(got == expected, 0);
     }
 

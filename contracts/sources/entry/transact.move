@@ -32,7 +32,18 @@ module utxopia::transact {
         public_inputs::assert_join_split_bindings(&public_inputs, n_inputs, n_outputs, &nullifiers_in, &commitments_out);
         public_inputs::assert_at(&public_inputs, 1, &bound_params::transfer_hash(&stealth_data));
         let proof_root = public_inputs::extract(&public_inputs, 0);
-        assert!(commitment_tree::is_valid_root_bytes(tree, &proof_root), errors::stale_merkle_root());
+        // Accept the active tree's roots OR a root of a tree the pool rotated out of, so
+        // notes created before a rotation stay spendable (audit CRITICAL #0).
+        assert!(
+            commitment_tree::is_valid_root_bytes(tree, &proof_root)
+                || pool::is_historical_root(pool, &proof_root),
+            errors::stale_merkle_root(),
+        );
+        // Reject a full tree before the expensive Groth16 verification rather than after
+        // (audit MINOR #16): every output commitment is inserted, so a full tree dooms the tx.
+        if (n_outputs > 0) {
+            assert!(!commitment_tree::is_full(tree), errors::tree_full());
+        };
         let verified = verifier::verify_join_split(
             vk_registry,
             n_inputs,

@@ -101,7 +101,7 @@ module utxopia::btc_deposit {
         };
         let (has_op_return, pool_tag, ephemeral_pubkey, note_public_key) = bitcoin::find_deposit_op_return(&deposit_tx_bytes);
         assert!(has_op_return, errors::invalid_stealth_op_return());
-        assert!(pool_tag == expected_pool_tag(pool, tree), errors::invalid_stealth_op_return());
+        assert!(pool_tag == expected_pool_tag(pool), errors::invalid_stealth_op_return());
         let note_public_key_field = commitment_tree::field_from_be_bytes(&note_public_key);
         let pool_script = pool::btc_pool_script(pool);
         let (found_out, credited, sweep_vout) = bitcoin::find_output_by_script(&sweep_raw_tx, &pool_script);
@@ -211,6 +211,22 @@ module utxopia::btc_deposit {
         record.status = UTXO_RESERVED;
         record.amount_sats
     }
+    /// Release a reserved UTXO back to UNSPENT. Used to recover pool liquidity when a
+    /// redemption that reserved inputs is abandoned without completing (audit MAJOR #3).
+    public(package) fun unreserve_utxo(
+        utxo_set: &mut UtxoSet,
+        pool_id: address,
+        txid: vector<u8>,
+        vout: u32,
+    ): u64 {
+        let key = outpoint_key(&txid, vout);
+        assert!(object_table::contains(&utxo_set.utxos, key), errors::invalid_redemption());
+        let record = object_table::borrow_mut(&mut utxo_set.utxos, key);
+        assert!(record.pool_id == pool_id, errors::invalid_redemption());
+        assert!(record.status == UTXO_RESERVED, errors::invalid_redemption());
+        record.status = UTXO_UNSPENT;
+        record.amount_sats
+    }
     public(package) fun remove_reserved_utxo(
         utxo_set: &mut UtxoSet,
         pool_id: address,
@@ -269,10 +285,13 @@ module utxopia::btc_deposit {
         vector::push_back(&mut key, (((vout >> 24) & 0xff) as u8));
         key
     }
-    fun expected_pool_tag(pool: &Pool, tree: &CommitmentTree): vector<u8> {
+    /// Deposit OP_RETURN tag. Bound to the POOL only — NOT the active commitment tree — so a
+    /// BTC deposit broadcast before a tree rotation stays completable afterward (audit
+    /// CRITICAL #0 / MEDIUM #5). The off-chain deposit builder MUST derive the same tag as
+    /// `sha256("UTXOPIA_SUI" || bcs(pool_id))[0..8]` (no tree component).
+    fun expected_pool_tag(pool: &Pool): vector<u8> {
         let mut data = b"UTXOPIA_SUI";
         vector::append(&mut data, bcs::to_bytes(&pool::pool_id(pool)));
-        vector::append(&mut data, bcs::to_bytes(&commitment_tree::id(tree)));
         bitcoin::slice(&hash::sha2_256(data), 0, 8)
     }
 }

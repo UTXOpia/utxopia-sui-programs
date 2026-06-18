@@ -59,6 +59,9 @@ module utxopia::ika_policy {
         ctx: &mut TxContext,
     ) {
         redemption::assert_cap_for_queue(cap, queue);
+        // The queue must be the pool's authorized queue (audit MAJOR #3) so signing approvals
+        // can only be minted for redemptions in the pool's real queue, not an attacker's.
+        pool::assert_redemption_queue(pool, object::id(queue));
         pool::assert_utxo_set(pool, object::id(utxo_set));
         assert!(vector::length(&sighash) == SIGHASH_LEN, errors::policy_rejected());
         assert!(redemption::is_pending(queue, redemption_id), errors::policy_rejected());
@@ -153,6 +156,7 @@ module utxopia::ika_policy {
         ctx: &TxContext,
     ) {
         redemption::assert_cap_for_queue(cap, queue);
+        pool::assert_redemption_queue(pool, object::id(queue));
         // A pause must freeze the signing pipeline: an approval minted before the pause
         // cannot be consumed (and thus signed by Ika) while the pool is paused.
         pool::assert_not_paused(pool);

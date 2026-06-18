@@ -39,12 +39,18 @@ module utxopia::pool {
         total_shielded: u128,
         total_utxo_sats: u128,
         commitment_tree_id: Option<ID>,
+        // Final roots of commitment trees this pool has rotated out of. Spend/prove flows
+        // accept proofs against these roots so notes (and BTC deposits) created before a
+        // rotation remain spendable forever (audit CRITICAL #0). One 32-byte root is recorded
+        // per rotation, which happens at most once per 65,536 notes — bounded growth.
+        historical_roots: vector<vector<u8>>,
         nullifier_registry_id: Option<ID>,
         btc_deposit_registry_id: Option<ID>,
         utxo_set_id: Option<ID>,
         vk_registry_id: Option<ID>,
         light_client_id: Option<ID>,
         token_registry_id: Option<ID>,
+        redemption_queue_id: Option<ID>,
         btc_pool_script: Option<vector<u8>>,
         permissioned: bool,
         auditor_frozen: bool,
@@ -95,12 +101,14 @@ module utxopia::pool {
             total_shielded: 0,
             total_utxo_sats: 0,
             commitment_tree_id: option::none(),
+            historical_roots: vector[],
             nullifier_registry_id: option::none(),
             btc_deposit_registry_id: option::none(),
             utxo_set_id: option::none(),
             vk_registry_id: option::none(),
             light_client_id: option::none(),
             token_registry_id: option::none(),
+            redemption_queue_id: option::none(),
             btc_pool_script: option::none(),
             permissioned,
             auditor_frozen: false,
@@ -137,6 +145,14 @@ module utxopia::pool {
         // so the downstream `amount_sats > total_fee` check can never pass -> global deposit DoS.
         assert!(deposit_fee_bps < MAX_BPS, errors::invalid_btc_deposit());
         assert!(min_deposit_sats <= max_deposit_sats, errors::invalid_btc_deposit());
+        // Cross-field viability: at least one amount in [min,max] must clear the downstream
+        // `amount_sats > protocol_fee + service_fee_sats` gate in complete_deposit_inner.
+        // The largest amount has the best chance, so require max_deposit_sats itself to be
+        // depositable; otherwise this config bricks the whole advertised deposit range once
+        // the timelock executes, despite passing the per-field checks (audit MEDIUM #8).
+        let total_fee_at_max = ((max_deposit_sats as u128) * (deposit_fee_bps as u128)) / 10_000
+            + (service_fee_sats as u128);
+        assert!((max_deposit_sats as u128) > total_fee_at_max, errors::fee_exceeds_amount());
         let execute_after = clock::timestamp_ms(clock) + CONFIG_TIMELOCK_DELAY_MS;
         pool.pending_min_deposit_sats = option::some(min_deposit_sats);
         pool.pending_max_deposit_sats = option::some(max_deposit_sats);
@@ -200,6 +216,14 @@ module utxopia::pool {
         assert!(option::is_none(&pool.token_registry_id), errors::already_bound());
         pool.token_registry_id = option::some(id);
     }
+    /// Bind the pool's single authorized redemption queue. Reserving this pool's UTXOs and
+    /// approving redemption signatures require the bound queue, so an attacker cannot drive
+    /// reservations through a queue they created (audit MAJOR #3).
+    public fun set_redemption_queue_id(cap: &AdminCap, pool: &mut Pool, id: ID) {
+        assert_admin(cap, pool);
+        assert!(option::is_none(&pool.redemption_queue_id), errors::already_bound());
+        pool.redemption_queue_id = option::some(id);
+    }
     public fun set_btc_pool_script(cap: &AdminCap, pool: &mut Pool, script: vector<u8>) {
         assert_admin(cap, pool);
         assert!(option::is_none(&pool.btc_pool_script), errors::already_bound());
@@ -258,6 +282,11 @@ module utxopia::pool {
             errors::invalid_tree_rotation(),
         );
         assert!(commitment_tree::next_index(new_tree) == 0, errors::invalid_tree_rotation());
+        // Preserve the rotated-out tree's final root so its still-unspent notes (and any BTC
+        // deposits that minted into it) stay provable after the pool rebinds (audit CRITICAL
+        // #0). A full tree's root is immutable, so the final root is sufficient: holders
+        // regenerate Merkle proofs against it off-chain.
+        vector::push_back(&mut pool.historical_roots, commitment_tree::current_root_bytes(old_tree));
         pool.commitment_tree_id = option::some(object::id(new_tree));
         events::commitment_tree_rotated(
             pool_id(pool),
@@ -286,6 +315,20 @@ module utxopia::pool {
     }
     public(package) fun assert_token_registry(pool: &Pool, id: ID) {
         assert!(option::contains(&pool.token_registry_id, &id), errors::wrong_object());
+    }
+    public(package) fun assert_redemption_queue(pool: &Pool, id: ID) {
+        assert!(option::contains(&pool.redemption_queue_id, &id), errors::wrong_object());
+    }
+    /// True if `root_be` is a 32-byte root of a commitment tree this pool rotated out of.
+    /// Spend/prove flows accept these so pre-rotation notes stay spendable (audit CRITICAL #0).
+    public(package) fun is_historical_root(pool: &Pool, root_be: &vector<u8>): bool {
+        let mut i = 0;
+        let n = vector::length(&pool.historical_roots);
+        while (i < n) {
+            if (vector::borrow(&pool.historical_roots, i) == root_be) { return true };
+            i = i + 1;
+        };
+        false
     }
     public fun assert_not_paused(pool: &Pool) {
         assert!(!pool.paused, errors::pool_paused());

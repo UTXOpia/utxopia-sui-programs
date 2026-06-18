@@ -575,10 +575,10 @@ module utxopia::btc_deposit_tests {
         s
     }
 
-    fun expected_pool_tag(pool: &Pool, tree: &CommitmentTree): vector<u8> {
+    fun expected_pool_tag(pool: &Pool, _tree: &CommitmentTree): vector<u8> {
+        // Pool-only tag (no tree component) — matches the on-chain change for audit CRITICAL #0.
         let mut data = b"UTXOPIA_SUI";
         vector::append(&mut data, bcs::to_bytes(&pool::pool_id(pool)));
-        vector::append(&mut data, bcs::to_bytes(&commitment_tree::id(tree)));
         btc_slice(&hash::sha2_256(data), 0, 8)
     }
 
@@ -590,5 +590,18 @@ module utxopia::btc_deposit_tests {
             i = i + 1;
         };
         out
+    }
+
+    // Cross-language lock with the SDK's `computeSuiDepositPoolTag` (audit CRITICAL #0,
+    // pool-only deposit tag). This is the exact formula `expected_pool_tag` uses, pinned
+    // for pool id 0x01*32. The TS test `taproot.test.ts > computeSuiDepositPoolTag` asserts
+    // the same vector. `bcs::to_bytes(&address)` is the raw 32 bytes, so the 0x01*32 input
+    // models a pool whose object id is 0x01*32.
+    #[test]
+    fun pool_tag_matches_sdk_vector() {
+        let mut data = b"UTXOPIA_SUI";
+        vector::append(&mut data, bytes(32, 0x01));
+        let tag = btc_slice(&hash::sha2_256(data), 0, 8);
+        assert!(tag == vector[191u8, 2u8, 13u8, 108u8, 129u8, 152u8, 4u8, 28u8], 0);
     }
 }

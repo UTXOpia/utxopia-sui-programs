@@ -98,10 +98,14 @@ module utxopia::pool_admin_tests {
         commitment_tree::test_set_next_index(&mut old_tree, MAX_LEAVES); // fill it
 
         pool::set_commitment_tree_id(&admin, &mut pool, object::id(&old_tree));
+        let old_root = commitment_tree::current_root_bytes(&old_tree);
         pool::rotate_commitment_tree(&admin, &mut pool, &old_tree, &new_tree);
 
         // Pool is now bound to the successor, not the old full tree.
         pool::assert_commitment_tree(&pool, object::id(&new_tree));
+        // Audit CRITICAL #0: the rotated-out tree's final root is preserved so its
+        // still-unspent notes remain provable through transact/redeem/unshield.
+        assert!(pool::is_historical_root(&pool, &old_root), 100);
 
         commitment_tree::test_destroy(old_tree);
         commitment_tree::test_destroy(new_tree);

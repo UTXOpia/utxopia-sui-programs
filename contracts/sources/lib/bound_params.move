@@ -28,13 +28,10 @@ module utxopia::bound_params {
         btc_scripts: &vector<vector<u8>>,
         stealth_data: &vector<vector<u8>>,
     ): vector<u8> {
-        let mut scripts = vector[];
-        let mut i = 0u64;
-        while (i < btc_scripts.length()) {
-            vector::append(&mut scripts, *btc_scripts.borrow(i));
-            i = i + 1;
-        };
-        let script_hash = hash::sha2_256(scripts);
+        // Bind the scripts with explicit boundaries (count + per-script length) so a proof
+        // cannot be replayed with a different partitioning of the same concatenated bytes
+        // (audit MAJOR #4 / #53).
+        let script_hash = length_prefixed_hash(btc_scripts);
         let stealth_hash = stealth_data_hash(stealth_data);
         let mut payload = vector[];
         vector::append(&mut payload, vector[0, 0, 0, 0]);
@@ -48,13 +45,15 @@ module utxopia::bound_params {
         recipients: &vector<address>,
         stealth_data: &vector<vector<u8>>,
     ): vector<u8> {
-        let mut addrs = vector[];
+        // Bind recipients with explicit boundaries (count + per-item length) so the proof
+        // commits to the exact recipient set and ordering (audit #51/#52 family).
+        let mut addr_items = vector[];
         let mut i = 0u64;
         while (i < recipients.length()) {
-            vector::append(&mut addrs, std::bcs::to_bytes(recipients.borrow(i)));
+            vector::push_back(&mut addr_items, std::bcs::to_bytes(recipients.borrow(i)));
             i = i + 1;
         };
-        let recipients_hash = hash::sha2_256(addrs);
+        let recipients_hash = length_prefixed_hash(&addr_items);
         let stealth_hash = stealth_data_hash(stealth_data);
         let mut payload = vector[];
         vector::append(&mut payload, vector[0, 0, 0, 0]);
@@ -75,13 +74,30 @@ module utxopia::bound_params {
         commitment_tree::field_to_be_bytes(be_bytes_to_u256(&digest) % BN254_FR)
     }
     fun stealth_data_hash(stealth_data: &vector<vector<u8>>): vector<u8> {
-        let mut data = vector[];
+        // Length-prefixed so entries of different sizes can't be re-sliced to the same hash
+        // (audit #51/#52/#54: ambiguous stealth-data concatenation).
+        length_prefixed_hash(stealth_data)
+    }
+    /// Hash a list of byte-strings with explicit boundaries so no two distinct lists can
+    /// collide: sha256( u32_le(count) || for each item [ u32_le(len) || item ] ).
+    fun length_prefixed_hash(items: &vector<vector<u8>>): vector<u8> {
+        let mut buf = vector[];
+        append_u32_le(&mut buf, (vector::length(items) as u32));
         let mut i = 0u64;
-        while (i < stealth_data.length()) {
-            vector::append(&mut data, *stealth_data.borrow(i));
+        while (i < vector::length(items)) {
+            let item = vector::borrow(items, i);
+            append_u32_le(&mut buf, (vector::length(item) as u32));
+            vector::append(&mut buf, *item);
             i = i + 1;
         };
-        hash::sha2_256(data)
+        hash::sha2_256(buf)
+    }
+    fun append_u32_le(out: &mut vector<u8>, value: u32) {
+        let mut i = 0u64;
+        while (i < 4) {
+            vector::push_back(out, ((value >> ((i * 8) as u8)) & 0xff) as u8);
+            i = i + 1;
+        };
     }
     fun append_u64_le(out: &mut vector<u8>, value: u64) {
         let mut i = 0u64;

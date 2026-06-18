@@ -237,7 +237,12 @@ module utxopia::btc_light_client_tests {
     fun i_reorg_multi_batch_fork() {
         let mut scenario = test_scenario::begin(SENDER);
         let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
-        lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(&mut scenario));
+        // required_confirmations = 3 so the fork point at height 100 stays at/above the
+        // finalized boundary (finalized = tip-2). The reorg replaces only the non-finalized
+        // recent blocks 101/102 — exactly what the corrected finality check permits
+        // (audit MAJOR #1). With the regtest default of 1 confirmation every block is
+        // instantly "finalized", which would (correctly) forbid this reorg.
+        lc::test_initialize_with_confirmations(genesis, 100, 1000, REGTEST_BITS, 1000, 3, test_scenario::ctx(&mut scenario));
         test_scenario::next_tx(&mut scenario, SENDER);
 
         let mut light = test_scenario::take_shared<LightClient>(&scenario);
@@ -310,6 +315,75 @@ module utxopia::btc_light_client_tests {
         assert!(out_height == 101, 2);
         assert!(out_root == txid, 3);
         assert!(out_index == 0, 4);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
+    fun dsha_pair(a: vector<u8>, b: vector<u8>): vector<u8> {
+        let mut buf = a;
+        vector::append(&mut buf, b);
+        lc::test_double_sha256(buf)
+    }
+
+    // Audit MAJOR #2: a valid proof for the last tx of an odd-width level (where Bitcoin
+    // duplicates the rightmost node) must be ACCEPTED. 3-tx block: level 0 pairs (t0,t1)
+    // and (t2,t2); the proof for t2 carries sib == current with the duplicate on the RIGHT.
+    #[test]
+    fun i_verify_inclusion_odd_level_duplicate_accepted() {
+        let mut scenario = test_scenario::begin(SENDER);
+        let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
+        lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let g = lc::tip_hash(&light);
+
+        let t0 = bytes32(40);
+        let t1 = bytes32(41);
+        let t2 = bytes32(42);
+        let h01 = dsha_pair(t0, t1);
+        let h22 = dsha_pair(t2, t2);
+        let root = dsha_pair(h01, h22);
+
+        let blk = make_header(g, root, 1001, REGTEST_BITS, 7);
+        let blkh = lc::test_double_sha256(blk);
+        lc::submit_headers(&mut light, blk, &clk);
+
+        // t2 at index 2: sib0 = t2 (duplicate on the right), sib1 = h01 (left). path_bits = 0b10.
+        let v = lc::verify_tx_inclusion(&light, blkh, t2, 2, vector[t2, h01], 2);
+        let (_id, out_txid, _b, _ht, out_root, out_idx) = lc::consume_inclusion(v);
+        assert!(out_txid == t2, 0);
+        assert!(out_root == root, 1);
+        assert!(out_idx == 2, 2);
+
+        clock::destroy_for_testing(clk);
+        test_scenario::return_shared(light);
+        test_scenario::end(scenario);
+    }
+
+    // Audit MAJOR #2 / CVE-2012-2459: a node presented as its OWN LEFT sibling (the forgery
+    // direction) must still be REJECTED with bad_merkle_proof (25).
+    #[test, expected_failure(abort_code = 25)]
+    fun i_verify_inclusion_rejects_left_duplicate_forgery() {
+        let mut scenario = test_scenario::begin(SENDER);
+        let genesis = make_header(bytes32(0), bytes32(9), 1000, REGTEST_BITS, 0);
+        lc::initialize(REGTEST, genesis, 100, 1000, REGTEST_BITS, 1000, test_scenario::ctx(&mut scenario));
+        test_scenario::next_tx(&mut scenario, SENDER);
+        let mut light = test_scenario::take_shared<LightClient>(&scenario);
+        let clk = clock::create_for_testing(test_scenario::ctx(&mut scenario));
+        let g = lc::tip_hash(&light);
+
+        let t2 = bytes32(42);
+        let root = dsha_pair(t2, t2);
+        let blk = make_header(g, root, 1001, REGTEST_BITS, 7);
+        let blkh = lc::test_double_sha256(blk);
+        lc::submit_headers(&mut light, blk, &clk);
+
+        // sib == current (t2) but flagged as a LEFT sibling (path bit 0 = 1) -> forgery -> abort 25.
+        let v = lc::verify_tx_inclusion(&light, blkh, t2, 1, vector[t2], 1);
+        let (_id, _txid, _b, _ht, _root, _idx) = lc::consume_inclusion(v);
 
         clock::destroy_for_testing(clk);
         test_scenario::return_shared(light);

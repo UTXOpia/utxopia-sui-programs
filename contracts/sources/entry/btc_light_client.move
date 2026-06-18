@@ -135,6 +135,24 @@ module utxopia::btc_light_client {
         let mut hashes = vector[];
         let regtest = lc.network == NETWORK_REGTEST;
         let testnet4 = lc.network == NETWORK_TESTNET4;
+        // Median Time Past window: timestamps of up to the previous 11 stored blocks
+        // (newest first), seeded from `parent`'s chain. Bitcoin consensus requires every
+        // block's timestamp to strictly exceed the median of the previous 11 (audit
+        // MEDIUM #7). Only maintained for non-regtest networks, which enforce the rule.
+        let mut mtp_window = vector[];
+        if (!regtest) {
+            let mut wh = parent.block_hash;
+            let mut more = true;
+            while (more && vector::length(&mtp_window) < 11) {
+                let r = *get_header(lc, &wh);
+                vector::push_back(&mut mtp_window, r.timestamp);
+                if (r.height == 0 || !has_header(lc, &r.prev_hash)) {
+                    more = false;
+                } else {
+                    wh = r.prev_hash;
+                };
+            };
+        };
         let mut i = 0;
         while (i < n) {
             let off = i * HEADER_LEN;
@@ -153,6 +171,16 @@ module utxopia::btc_light_client {
                     (timestamp as u64) * 1000 <= now_ms + MAX_FUTURE_DRIFT_MS,
                     errors::timestamp_too_far(),
                 );
+                // Median Time Past: reject any header whose timestamp is not strictly
+                // greater than the median of the previous 11 block timestamps (audit
+                // MEDIUM #7). Then slide the window forward so later in-batch headers
+                // are checked against the correct, updated set.
+                assert!(
+                    (timestamp as u64) > (median_timestamp(&mtp_window) as u64),
+                    errors::timestamp_not_after_mtp(),
+                );
+                vector::insert(&mut mtp_window, timestamp, 0);
+                if (vector::length(&mtp_window) > 11) { vector::pop_back(&mut mtp_window); };
                 let required_bits = required_bits_for_next_block(
                     testnet4,
                     block_height,
@@ -197,10 +225,27 @@ module utxopia::btc_light_client {
         let old_tip_height = lc.tip_height;
         let mut reorg = false;
         if (running_chainwork > lc.total_chainwork) {
-            // Reject reorgs whose fork point is strictly below finalized_height.
-            // A parent at finalized_height only rewrites heights finalized_height+1
-            // and above, so finalized blocks themselves remain canonical.
-            assert!(parent.height >= lc.finalized_height, errors::reorg_below_finalized());
+            // Determine the TRUE fork point against the current canonical chain: walk back
+            // from `parent` along stored ancestors until one matches canonical. A reorg only
+            // overwrites heights ABOVE the fork point, so the fork point must be at or above
+            // `finalized_height` for every finalized block to stay canonical. Checking only
+            // `parent.height` was insufficient: a batch can extend a previously-stored deep
+            // side fork whose real divergence point is far below `parent`, letting a heavier
+            // branch rewrite finalized history (audit MAJOR #1).
+            let mut fork_hash = parent.block_hash;
+            let mut fork_height = parent.height;
+            let mut finding = true;
+            while (finding) {
+                if (canonical_hash_at(lc, fork_height) == fork_hash) {
+                    finding = false;
+                } else if (fork_height == 0 || !has_header(lc, &fork_hash)) {
+                    finding = false;
+                } else {
+                    fork_hash = get_header(lc, &fork_hash).prev_hash;
+                    fork_height = fork_height - 1;
+                };
+            };
+            assert!(fork_height >= lc.finalized_height, errors::reorg_below_finalized());
             let mut k = 0;
             while (k < n) {
                 set_canonical_height(lc, parent.height + 1 + k, *vector::borrow(&hashes, k));
@@ -279,16 +324,27 @@ module utxopia::btc_light_client {
         let n_sib = vector::length(&merkle_siblings);
         assert!(n_sib <= MAX_MERKLE_DEPTH, errors::bad_merkle_proof());
         if (n_sib == 0) {
+            // A coinbase-only (single-tx) block: the txid IS the merkle root and the only
+            // valid leaf index is 0 (audit discussion #39: missing tx_index validation).
             assert!(txid == rec.merkle_root, errors::bad_merkle_proof());
+            assert!(tx_index == 0, errors::bad_merkle_proof());
         } else {
             let mut current = txid;
             let mut i = 0;
             while (i < n_sib) {
                 let sib = *vector::borrow(&merkle_siblings, i);
                 assert!(vector::length(&sib) == 32, errors::bad_merkle_proof());
-                // Reject a sibling equal to the current node (CVE-2012-2459 duplicate-child forgery).
-                assert!(sib != current, errors::bad_merkle_proof());
                 let is_left = ((path_bits >> (i as u8)) & 1) == 1;
+                // A sibling equal to the current node is legitimate only where Bitcoin
+                // duplicates the rightmost node of an odd-width level: that node is the LEFT
+                // input and its copy fills the RIGHT slot, so `is_left == false`. Allowing
+                // exactly that case fixes false rejection of valid proofs for the last tx of
+                // an odd-width level (audit MAJOR #2) while still rejecting the
+                // CVE-2012-2459 duplicate-child forgery direction (a node fed as its own
+                // LEFT sibling, `is_left == true`).
+                if (sib == current) {
+                    assert!(!is_left, errors::bad_merkle_proof());
+                };
                 current = if (is_left) {
                     double_sha256_pair(&sib, &current)
                 } else {
@@ -491,6 +547,26 @@ module utxopia::btc_light_client {
     }
     fun saturating_sub(a: u64, b: u64): u64 {
         if (a >= b) { a - b } else { 0 }
+    }
+    /// Median of up to 11 recent block timestamps (Bitcoin's Median Time Past). Sorts a
+    /// copy ascending (n <= 11, so an O(n^2) selection sort is fine) and returns the
+    /// middle element. With fewer than 11 ancestors (near genesis) it uses what is
+    /// available, matching Bitcoin's behaviour at low heights.
+    fun median_timestamp(window: &vector<u32>): u32 {
+        let n = vector::length(window);
+        let mut sorted = *window;
+        let mut a = 0u64;
+        while (a < n) {
+            let mut b = a + 1;
+            while (b < n) {
+                if (*vector::borrow(&sorted, b) < *vector::borrow(&sorted, a)) {
+                    vector::swap(&mut sorted, a, b);
+                };
+                b = b + 1;
+            };
+            a = a + 1;
+        };
+        *vector::borrow(&sorted, n / 2)
     }
     #[test_only]
     public fun test_double_sha256(data: vector<u8>): vector<u8> { double_sha256(&data) }

@@ -7,6 +7,7 @@ module utxopia::token_registry {
     use sui::coin::{Self, Coin, CoinMetadata};
     use sui::dynamic_field as df;
     use sui::poseidon;
+    use std::option::{Self, Option};
     use utxopia::bound_params;
     use utxopia::commitment_tree::{Self, CommitmentTree};
     use utxopia::errors;
@@ -22,6 +23,10 @@ module utxopia::token_registry {
     public struct TokenRegistry has key {
         id: UID,
         registered: u64,
+        // The single pool allowed to use this registry. Bound on first use; every later
+        // registry operation must come from the same pool. Prevents a second pool from
+        // binding to and sharing this registry's caps, balances, and fees (audit MEDIUM #10).
+        owner_pool: Option<address>,
     }
     public struct VaultKey<phantom T> has copy, drop, store {}
     public struct FeeKey<phantom T> has copy, drop, store {}
@@ -37,7 +42,17 @@ module utxopia::token_registry {
         enabled: bool,
     }
     public fun initialize_registry(ctx: &mut TxContext) {
-        transfer::share_object(TokenRegistry { id: object::new(ctx), registered: 0 });
+        transfer::share_object(TokenRegistry { id: object::new(ctx), registered: 0, owner_pool: option::none() });
+    }
+    /// Bind the registry to `pool` on first use and require the same pool every time after,
+    /// enforcing a strict 1:1 pool-to-registry relationship (audit MEDIUM #10).
+    fun assert_registry_owner(registry: &mut TokenRegistry, pool: &Pool) {
+        let pool_id = pool::pool_id(pool);
+        if (option::is_none(&registry.owner_pool)) {
+            registry.owner_pool = option::some(pool_id);
+        } else {
+            assert!(option::contains(&registry.owner_pool, &pool_id), errors::registry_already_owned());
+        };
     }
     public fun register_token<T>(
         cap: &AdminCap,
@@ -51,6 +66,7 @@ module utxopia::token_registry {
     ) {
         pool::assert_admin(cap, pool);
         pool::assert_token_registry(pool, object::id(registry));
+        assert_registry_owner(registry, pool);
         assert!(!df::exists(&registry.id, ConfigKey<T> {}), errors::token_already_registered());
         assert!(fee_bps <= MAX_BPS, errors::invalid_token_config());
         assert!(min_deposit > 0, errors::invalid_token_config());
@@ -113,6 +129,7 @@ module utxopia::token_registry {
     ) {
         pool::assert_not_paused(pool);
         pool::assert_token_registry(pool, object::id(registry));
+        assert_registry_owner(registry, pool);
         pool::assert_commitment_tree(pool, object::id(tree));
         assert!(df::exists(&registry.id, ConfigKey<T> {}), errors::token_not_registered());
         let amount = coin::value(&coin);
@@ -171,6 +188,7 @@ module utxopia::token_registry {
     ) {
         pool::assert_not_paused(pool);
         pool::assert_token_registry(pool, object::id(registry));
+        assert_registry_owner(registry, pool);
         pool::assert_commitment_tree(pool, object::id(tree));
         pool::assert_nullifier_registry(pool, object::id(nullifiers));
         pool::assert_vk_registry(pool, object::id(vk_registry));
@@ -201,7 +219,18 @@ module utxopia::token_registry {
             k = k + 1;
         };
         let proof_root = public_inputs::extract(&public_inputs, 0);
-        assert!(commitment_tree::is_valid_root_bytes(tree, &proof_root), errors::stale_merkle_root());
+        // Accept the active tree's roots OR a root of a tree the pool rotated out of, so
+        // notes created before a rotation stay spendable (audit CRITICAL #0).
+        assert!(
+            commitment_tree::is_valid_root_bytes(tree, &proof_root)
+                || pool::is_historical_root(pool, &proof_root),
+            errors::stale_merkle_root(),
+        );
+        // Reject a full tree before the expensive Groth16 verification rather than mid-insert
+        // (audit MINOR #16) when this unshield mints private/tree outputs.
+        if (n_tree_outputs > 0) {
+            assert!(!commitment_tree::is_full(tree), errors::tree_full());
+        };
         let verified = verifier::verify_join_split(
             vk_registry,
             n_inputs,
@@ -262,6 +291,7 @@ module utxopia::token_registry {
     ) {
         pool::assert_admin(cap, pool);
         pool::assert_token_registry(pool, object::id(registry));
+        assert_registry_owner(registry, pool);
         assert!(df::exists(&registry.id, ConfigKey<T> {}), errors::token_not_registered());
         let token_id = token_id<T>(registry);
         let fees: &mut Balance<T> = df::borrow_mut(&mut registry.id, FeeKey<T> {});

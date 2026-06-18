@@ -50,6 +50,7 @@ module utxopia::ika_policy_tests {
     ) {
         pool::set_utxo_set_id(admin, pool, object::id(utxo_set));
         pool::set_btc_pool_script(admin, pool, spk(0xAA));
+        pool::set_redemption_queue_id(admin, pool, object::id(queue));
         redemption::test_request_redemption(pool, queue, btc_script, amount, max_fee, ctx);
         btc_deposit::test_add_utxo(utxo_set, pool::pool_id(pool), utxo_txid, utxo_vout, utxo_amount, ctx);
         redemption::mark_processing(cap, pool, utxo_set, queue, 0, vector[utxo_txid], vector[utxo_vout], est_fee);
@@ -181,6 +182,7 @@ module utxopia::ika_policy_tests {
         let admin = test_scenario::take_from_sender<AdminCap>(&scenario);
         pool::set_utxo_set_id(&admin, &mut pool, object::id(&utxo_set));
         pool::set_btc_pool_script(&admin, &mut pool, spk(0xAA));
+        pool::set_redemption_queue_id(&admin, &mut pool, object::id(&queue));
         test_scenario::return_to_sender(&scenario, admin);
 
         redemption::test_request_redemption(&mut pool, &mut queue, spk(0xBB), 50_000, 12_500, test_scenario::ctx(&mut scenario));

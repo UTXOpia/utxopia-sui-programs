@@ -68,7 +68,9 @@ module utxopia::token_registry_tests {
             vector[@0xA11CE, @0xB0B],
             vector[bytes(72, 0x11)],
         );
-        let expected = x"07409ca23f284d6ce3cb9b26a898564117faa88a6dd496f926e1c340dd748b35";
+        // Length-prefixed encoding (audit #4/#51-54): count + per-item length bound into the
+        // hash. Locked to the SDK's createSuiUnshieldBoundParams.
+        let expected = x"25f18c980939dfacb79f4159fed02f10537abf0608d334c5d29dd9a9e3d5f3a5";
         assert!(got == expected, 0);
     }
 

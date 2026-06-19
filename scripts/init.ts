@@ -49,6 +49,10 @@ callWithAdminCap("pool", "set_nullifier_registry_id", [state.adminCap!.objectId,
 callWithAdminCap("pool", "set_btc_deposit_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.btcDepositRegistry!.objectId]);
 callWithAdminCap("pool", "set_utxo_set_id", [state.adminCap!.objectId, state.pool!.objectId, state.utxoSet!.objectId]);
 callWithAdminCap("pool", "set_vk_registry_id", [state.adminCap!.objectId, state.pool!.objectId, state.verifyingKeyRegistry!.objectId]);
+// Bind the pool's single authorized redemption queue (audit MAJOR #3): redeem,
+// mark_processing, approve_signing, and consume_approval now require it, so an attacker
+// cannot drive reservations/signing through a queue they created.
+callWithAdminCap("pool", "set_redemption_queue_id", [state.adminCap!.objectId, state.pool!.objectId, state.redemptionQueue!.objectId]);
 
 // NOTE: btc_light_client::initialize is a separate, network-specific bootstrap (it anchors
 // a trusted checkpoint header + chainwork) driven by the header relayer — analogous to the

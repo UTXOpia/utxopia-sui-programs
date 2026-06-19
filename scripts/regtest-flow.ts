@@ -8,7 +8,6 @@ import {
   BN254_FIELD_PRIME,
   buildDepositOpReturn,
   bytesToBigint,
-  computeBoundParamsHash,
   DEPOSIT_BITCOIN_NETWORK,
   DEPOSIT_DESTINATION_CHAIN,
   eddsaGetPubKey,
@@ -235,10 +234,11 @@ async function createDirectDeposit(inputNpk: bigint, depositAmount: bigint) {
 }
 
 function buildSuiDepositOpReturnPayload(ephemeralPubkey: Uint8Array, notePublicKey: Uint8Array): Uint8Array {
+  // Deposit tag is pool-only now (audit CRITICAL #0): sha256("UTXOPIA_SUI" || bcs(pool_id))[0..8].
+  // The commitment tree was dropped from the tag so tree rotation can't invalidate in-flight deposits.
   const tagInput = concatBytes([
     new TextEncoder().encode("UTXOPIA_SUI"),
     suiAddressToBytes(pool.objectId),
-    suiAddressToBytes(commitmentTree.objectId),
   ]);
   return buildDepositOpReturn(ephemeralPubkey, notePublicKey, {
     destinationChain: DEPOSIT_DESTINATION_CHAIN.SUI,
@@ -308,12 +308,9 @@ async function buildJoinSplitNote(noteAmount: bigint) {
   const outputNpk = poseidonHashSync([mpk, outputRandom]);
   const outputCommitment = poseidonHashSync([outputNpk, ZKBTC_TOKEN_ID, noteAmount]);
   const nullifier = poseidonHashSync([nullifyingKey, BigInt(merkle.index)]);
-  const boundParamsHash = computeBoundParamsHash({
-    treeNumber: 0,
-    unshieldAddress: null,
-    chainId: BigInt(process.env.UTXOPIA_SUI_CHAIN_ID ?? "784"),
-    stealthDataHash: sha256(stealthBlob),
-  });
+  // Sui transfer_hash: stealth-data is length-prefixed on-chain (audit #4/#51-54), so the
+  // prover must bind the same encoding or the on-chain bound-params check rejects the proof.
+  const boundParamsHash = transferHashFieldValue([stealthBlob]);
   const msgHash = poseidonHashSync([merkle.root, boundParamsHash, nullifier, outputCommitment]);
   const signature = await eddsaPoseidonSign(seed, msgHash);
 
@@ -767,11 +764,27 @@ function beBytesToBigint(b: Uint8Array): bigint { let v = 0n; for (const x of b)
 function le64(v: bigint): Uint8Array { const o = new Uint8Array(8); for (let i = 0; i < 8; i++) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; }
 function fieldToBe(v: bigint): Uint8Array { const o = new Uint8Array(32); for (let i = 31; i >= 0; i--) { o[i] = Number(v & 0xffn); v >>= 8n; } return o; }
 function cat(parts: Uint8Array[]): Uint8Array { const n = parts.reduce((s, p) => s + p.length, 0); const o = new Uint8Array(n); let off = 0; for (const p of parts) { o.set(p, off); off += p.length; } return o; }
+function le32(v: number): Uint8Array { const o = new Uint8Array(4); for (let i = 0; i < 4; i++) { o[i] = (v >>> (i * 8)) & 0xff; } return o; }
+// bound_params::length_prefixed_hash → sha256( u32le(count) || for each [ u32le(len) || item ] ) (audit #4/#51-54).
+function lengthPrefixedHash(items: Uint8Array[]): Uint8Array {
+  const parts: Uint8Array[] = [le32(items.length)];
+  for (const it of items) { parts.push(le32(it.length)); parts.push(it); }
+  return sha256(cat(parts));
+}
+
+// bound_params::transfer_hash → field value. flag=TRANSFER(0); 32-byte zero address slot.
+function transferHashFieldValue(stealthData: Uint8Array[]): bigint {
+  const stealthHash = lengthPrefixedHash(stealthData);
+  const payload = cat([new Uint8Array([0, 0, 0, 0]), new Uint8Array([0]), new Uint8Array(32), le64(784n), stealthHash]);
+  return beBytesToBigint(sha256(payload)) % BN254_FIELD_PRIME;
+}
 
 // bound_params::redeem_hash → field value (BE(sha256(payload)) mod r). flag=REDEEM(2).
+// Scripts and stealth-data are length-prefixed so a proof can't be replayed with a
+// different partitioning of the same concatenated bytes (audit MAJOR #4 / #53).
 function redeemHashFieldValue(scripts: Uint8Array[], stealthData: Uint8Array[]): bigint {
-  const scriptHash = sha256(cat(scripts));
-  const stealthHash = sha256(cat(stealthData));
+  const scriptHash = lengthPrefixedHash(scripts);
+  const stealthHash = lengthPrefixedHash(stealthData);
   const payload = cat([new Uint8Array([0, 0, 0, 0]), new Uint8Array([2]), scriptHash, le64(784n), stealthHash]);
   return beBytesToBigint(sha256(payload)) % BN254_FIELD_PRIME;
 }

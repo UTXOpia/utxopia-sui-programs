@@ -34,6 +34,7 @@ import {
   to0xHex as toHex,
 } from "./lib/bytes";
 import { assertSuiSuccess } from "./lib/sui-tx";
+import { p2trAddress } from "./lib/bech32m";
 import { Transaction } from "@mysten/sui/transactions";
 import { readState, requireState, writeState, findCreatedObject, objectRefFromChange, sharedRefFromChange } from "./shared";
 import { cleanupProof, exportSuiProof, generateProof, verifyProof } from "./test-flow/proof-artifacts";
@@ -716,10 +717,19 @@ async function ensurePoolLightClientBound() {
 
 function getRegtestPoolBtcAddress(): string {
   if (!regtestPoolBtcAddress) {
-    regtestPoolBtcAddress = getNewAddress("bech32m");
+    // The pool BTC address must be the Ika dWallet's taproot so the redeem payout can be
+    // Ika-signed to spend the deposit UTXO (verify is against the raw x-only key, untweaked).
+    // Fall back to a wallet address only when no dWallet is configured (deposit-only runs).
+    const xonly = state.ikaSui?.dWalletXOnlyPubkey;
+    if (xonly) {
+      regtestPoolBtcAddress = p2trAddress(xonly, "regtest");
+      console.log(`Using Ika dWallet taproot as regtest BTC pool address: ${regtestPoolBtcAddress}`);
+    } else {
+      regtestPoolBtcAddress = getNewAddress("bech32m");
+      console.log(`Using generated regtest BTC pool address: ${regtestPoolBtcAddress}`);
+    }
     (state as any).regtestPoolBtcAddress = regtestPoolBtcAddress;
     writeState(state);
-    console.log(`Using generated regtest BTC pool address: ${regtestPoolBtcAddress}`);
   }
   return regtestPoolBtcAddress;
 }
@@ -864,7 +874,6 @@ async function runRedeemAndWithdraw(note: any, deposit: any, redeemFrontier: { n
     commitmentsOut: [Uint8Array.from(pub.slice(96, 128)).reverse(), Uint8Array.from(pub.slice(128, 160)).reverse()],
     btcScripts: [withdrawScript],
     amountsSats: [redeemBtcSats],
-    maxFeesSats: [BigInt(process.env.UTXOPIA_SUI_REDEEM_MAX_FEE_SATS ?? "5000")],
     stealthData: [stealth0],
   });
   const redeemRes = await executeTransactionKind(redeemTx.bytes);
@@ -880,8 +889,11 @@ async function runRedeemAndWithdraw(note: any, deposit: any, redeemFrontier: { n
   const poolChange = depositValue - redeemBtcSats - btcFee;
   if (poolChange < 0n) throw new Error("deposit UTXO too small for redeem + fee");
 
-  const ins = [{ txidLE: reverseHexToBytes(deposit.depositTxid), vout: deposit.depositVout, sequence: 0xffffffff }];
-  const outs = poolChange > 546n
+  // Sequence + dust threshold MUST match the on-chain policy's tx reconstruction
+  // (ika_policy: BTC_INPUT_SEQUENCE=0xFFFFFFFD, BTC_DUST_THRESHOLD_SATS=330) or the
+  // reconstructed sighash won't equal ours and approve_signing aborts E_POLICY_REJECTED.
+  const ins = [{ txidLE: reverseHexToBytes(deposit.depositTxid), vout: deposit.depositVout, sequence: 0xfffffffd }];
+  const outs = poolChange > 330n
     ? [{ value: redeemBtcSats, script: withdrawScript }, { value: poolChange, script: poolScript }]
     : [{ value: redeemBtcSats, script: withdrawScript }];
 

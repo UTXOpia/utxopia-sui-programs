@@ -88,7 +88,8 @@ export interface UtxopiaSuiState {
   tokenRegistry?: SuiSharedObjectRef;
   registeredTokens?: Record<string, {
     coinType: string;
-    metadataId: string;
+    metadataId?: string;
+    decimals?: number;
     minDeposit: string;
     maxDeposit: string;
     depositCap: string;

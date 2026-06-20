@@ -72,8 +72,43 @@ module utxopia::token_registry {
         assert!(min_deposit > 0, errors::invalid_token_config());
         assert!(min_deposit <= max_deposit, errors::invalid_token_config());
         assert!(max_deposit <= deposit_cap, errors::invalid_token_config());
-        let token_id = bound_params::sui_token_id<T>();
         let decimals = coin::get_decimals(metadata);
+        register_token_inner<T>(registry, decimals, min_deposit, max_deposit, deposit_cap, fee_bps);
+    }
+    /// Register a `Coin<T>` when the legacy `CoinMetadata<T>` object is unavailable.
+    ///
+    /// Native SUI on current testnet has migrated to the newer coin registry metadata path, while
+    /// the pool still stores only the token decimals needed for amount display and accounting.
+    /// This entry keeps the admin allowlist model but lets governance pin the decimals directly.
+    public fun register_token_with_decimals<T>(
+        cap: &AdminCap,
+        pool: &Pool,
+        registry: &mut TokenRegistry,
+        decimals: u8,
+        min_deposit: u64,
+        max_deposit: u64,
+        deposit_cap: u64,
+        fee_bps: u16,
+    ) {
+        pool::assert_admin(cap, pool);
+        pool::assert_token_registry(pool, object::id(registry));
+        assert_registry_owner(registry, pool);
+        assert!(!df::exists(&registry.id, ConfigKey<T> {}), errors::token_already_registered());
+        assert!(fee_bps <= MAX_BPS, errors::invalid_token_config());
+        assert!(min_deposit > 0, errors::invalid_token_config());
+        assert!(min_deposit <= max_deposit, errors::invalid_token_config());
+        assert!(max_deposit <= deposit_cap, errors::invalid_token_config());
+        register_token_inner<T>(registry, decimals, min_deposit, max_deposit, deposit_cap, fee_bps);
+    }
+    fun register_token_inner<T>(
+        registry: &mut TokenRegistry,
+        decimals: u8,
+        min_deposit: u64,
+        max_deposit: u64,
+        deposit_cap: u64,
+        fee_bps: u16,
+    ) {
+        let token_id = bound_params::sui_token_id<T>();
         let cfg = TokenCfg {
             token_id,
             decimals,

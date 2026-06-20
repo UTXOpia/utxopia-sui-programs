@@ -162,7 +162,8 @@ async function runRegtestFlow() {
   const transactResult = await executeTransactionKind(transactTx.bytes);
   assertSuiSuccess("transact", transactResult);
 
-  if (process.env.UTXOPIA_SUI_DO_REDEEM === "1") {
+  const didRedeem = process.env.UTXOPIA_SUI_DO_REDEEM === "1";
+  if (didRedeem) {
     await runRedeemAndWithdraw(note, deposit, redeemFrontier);
   }
 
@@ -171,8 +172,9 @@ async function runRegtestFlow() {
     depositTxid: deposit.depositTxid,
     shieldTxDigest: shieldResult.digest,
     transactTxDigest: transactResult.digest,
-    status: "deposit_and_transact_complete",
-    redeemStatus: "disabled_until_real_redeem_proof_fixture",
+    status: didRedeem ? "full_cycle_complete" : "deposit_and_transact_complete",
+    redeemStatus: didRedeem ? "complete" : "skipped_set_UTXOPIA_SUI_DO_REDEEM_1",
+    redeem: didRedeem ? (state as any).lastSuiRedeem : undefined,
   };
   writeState(state);
 
@@ -189,11 +191,16 @@ async function runRegtestFlow() {
       shieldStatus: shieldResult.effects?.status,
       transactTxDigest: transactResult.digest,
       transactStatus: transactResult.effects?.status,
+      redeem: didRedeem ? (state as any).lastSuiRedeem : undefined,
     },
-    limitations: [
-      "Sui BTC deposit completion is SPV-checked in one PTB: btc_light_client::verify_tx_inclusion feeds btc_deposit::complete_deposit.",
-      "BTC redemption is intentionally not run here until this script builds a second proof-checked redeem fixture for the output note.",
-    ],
+    notes: didRedeem
+      ? [
+        "Full Sui BTC cycle completed: SPV deposit, private transfer, proof-checked redeem, Ika Taproot payout, and SPV complete_redemption.",
+      ]
+      : [
+        "Sui BTC deposit completion is SPV-checked in one PTB: btc_light_client::verify_tx_inclusion feeds btc_deposit::complete_deposit.",
+        "Set UTXOPIA_SUI_DO_REDEEM=1 and UTXOPIA_SUI_WITHDRAW_SIGNER_MODE=ika to run the BTC redemption leg.",
+      ],
   }, null, 2));
 
   cleanupProof(note.tmpDir);

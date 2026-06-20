@@ -97,6 +97,38 @@ module utxopia::token_registry_tests {
         test_scenario::end(scenario);
     }
 
+    #[test]
+    fun register_native_sui_with_explicit_decimals() {
+        let mut scenario = test_scenario::begin(SENDER);
+        setup(&mut scenario);
+        test_scenario::next_tx(&mut scenario, SENDER);
+
+        let mut pool = test_scenario::take_shared<Pool>(&scenario);
+        let mut registry = test_scenario::take_shared<TokenRegistry>(&scenario);
+        let admin = test_scenario::take_from_sender<AdminCap>(&scenario);
+        pool::set_token_registry_id(&admin, &mut pool, object::id(&registry));
+
+        token_registry::register_token_with_decimals<NativeSUI>(
+            &admin,
+            &pool,
+            &mut registry,
+            9,
+            100_000_000,
+            1_000_000_000_000,
+            100_000_000_000_000,
+            0,
+        );
+
+        assert!(token_registry::registered(&registry) == 1, 0);
+        assert!(token_registry::is_registered<NativeSUI>(&registry), 1);
+        assert!(token_registry::token_id<NativeSUI>(&registry) == bound_params::test_sui_token_id<NativeSUI>(), 2);
+
+        test_scenario::return_to_sender(&scenario, admin);
+        test_scenario::return_shared(pool);
+        test_scenario::return_shared(registry);
+        test_scenario::end(scenario);
+    }
+
     #[test, expected_failure]
     fun register_token_rejects_duplicate() {
         let mut scenario = test_scenario::begin(SENDER);

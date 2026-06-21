@@ -20,6 +20,7 @@ const KNOWN_EVENT_TYPES = new Set<SuiUtxopiaEventType>([
   "IkaSigningApproved",
   "VerifyingKeyRegistered",
   "JoinSplitVerified",
+  "StealthAnnounced",
 ]);
 
 export class SuiUtxopiaEventSource implements SuiEventSource {

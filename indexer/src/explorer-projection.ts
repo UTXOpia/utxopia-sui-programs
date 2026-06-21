@@ -5,6 +5,41 @@
 
 import type { NormalizedSuiUtxopiaEvent } from "./types";
 
+// ---- token_id → symbol mapping ----
+// token_id is the u256 the contract emits in StealthAnnounced. zkBTC uses the fixed
+// constant 0x7a627463; generic Coin<T> use sui_token_id<T> = poseidon(reduceToField(
+// sha256(canonicalCoinType)), 0). These decimals are precomputed via the SDK's
+// deriveSuiTokenId(canonicalSuiCoinType(coinType)) and must match the on-chain ids.
+// Extend/override via UTXOPIA_SUI_TOKEN_SYMBOLS JSON env ({ "<tokenIdDecimal>": {symbol,tokenId} }).
+const DEFAULT_TOKEN_BY_ID: Record<string, { symbol: string; tokenId: string }> = {
+  "0": { symbol: "BTC", tokenId: "zkbtc" }, // legacy: early zkBTC transfers emitted token_id=0
+  "2053731171": { symbol: "BTC", tokenId: "zkbtc" }, // 0x7a627463
+  "5729437102184849778668526405268973236256129339008312812379167653590629849113": { symbol: "SUI", tokenId: "sui" },
+  "585038404502549873814321170636707573157983291226147891529771694138054187327": { symbol: "USDC", tokenId: "usdc" },
+  "16314386716132260172936497875226280438131721877699366977006216017947034519037": { symbol: "DUSD", tokenId: "dusd" },
+};
+
+let TOKEN_BY_ID: Map<string, { symbol: string; tokenId: string }> | null = null;
+function tokenMap(): Map<string, { symbol: string; tokenId: string }> {
+  if (TOKEN_BY_ID) return TOKEN_BY_ID;
+  let cfg = DEFAULT_TOKEN_BY_ID;
+  try {
+    if (process.env.UTXOPIA_SUI_TOKEN_SYMBOLS) {
+      cfg = { ...cfg, ...(JSON.parse(process.env.UTXOPIA_SUI_TOKEN_SYMBOLS) as typeof DEFAULT_TOKEN_BY_ID) };
+    }
+  } catch { /* ignore malformed override */ }
+  TOKEN_BY_ID = new Map(Object.entries(cfg));
+  return TOKEN_BY_ID;
+}
+
+// Resolve a u256 token id (decimal string) → { tokenId, tokenSymbol }; falls back to a short id.
+function resolveToken(tokenIdDecimal: string | undefined): { tokenId: string | null; tokenSymbol: string | null } {
+  if (!tokenIdDecimal) return { tokenId: null, tokenSymbol: null };
+  const hit = tokenMap().get(tokenIdDecimal);
+  if (hit) return { tokenId: hit.tokenId, tokenSymbol: hit.symbol };
+  return { tokenId: tokenIdDecimal, tokenSymbol: `token:${tokenIdDecimal.slice(0, 8)}` };
+}
+
 export interface ExplorerTx {
   txSignature: string;
   type: "shield" | "transfer" | "unshield" | "withdraw";
@@ -127,15 +162,45 @@ export function buildExplorerTransactions(
           commitment: bytesField(e.payload.commitment),
           leafIndex: numberField(e.payload.leaf_index),
         }));
+      // Token comes from the StealthAnnounced event in the same tx (carries token_id).
+      const stealth = txEvents.find((e) => e.type === "StealthAnnounced");
+      const { tokenId, tokenSymbol } = resolveToken(stringField(stealth?.payload.token_id));
+      // No spent inputs → a shield (deposit of Coin<T>); otherwise a private transfer.
+      const nInputs = numberField(primary.payload.n_inputs) ?? nullifiers.length;
       txs.push({
         txSignature: txDigest,
-        type: "transfer",
-        tokenId: "zkbtc",
-        tokenSymbol: "BTC",
+        type: nInputs === 0 ? "shield" : "transfer",
+        tokenId: tokenId ?? "zkbtc",
+        tokenSymbol: tokenSymbol ?? "BTC",
         timestamp,
         status: "confirmed",
         inputs: nullifiers,
         outputs: commitments,
+      });
+      continue;
+    }
+
+    if (primary.type === "StealthAnnounced") {
+      // A generic Coin<T> shield (no JoinSplit, no BTC deposit) — token from the event.
+      const { tokenId, tokenSymbol } = resolveToken(stringField(p.token_id));
+      const commitments = txEvents
+        .filter((e) => e.type === "CommitmentInserted")
+        .map((e) => ({
+          type: "commitment",
+          commitment: bytesField(e.payload.commitment),
+          leafIndex: numberField(e.payload.leaf_index),
+        }));
+      txs.push({
+        txSignature: txDigest,
+        type: "shield",
+        tokenId: tokenId ?? null,
+        tokenSymbol: tokenSymbol ?? null,
+        timestamp,
+        status: "confirmed",
+        inputs: [{ amount: numberField(p.amount) }],
+        outputs: commitments.length
+          ? commitments
+          : [{ type: "commitment", commitment: bytesField(p.commitment), leafIndex: numberField(p.leaf_index), amount: numberField(p.amount) }],
       });
       continue;
     }
@@ -188,6 +253,9 @@ function pickPrimary(events: NormalizedSuiUtxopiaEvent[]): NormalizedSuiUtxopiaE
     events.find((e) => e.type === "JoinSplitVerified") ??
     events.find((e) => e.type === "RedemptionRequested") ??
     events.find((e) => e.type === "RedemptionCompleted") ??
+    // Generic Coin<T> shields emit only StealthAnnounced (no JoinSplit) — without this
+    // they'd be skipped and non-BTC deposits would never appear in history.
+    events.find((e) => e.type === "StealthAnnounced") ??
     null
   );
 }

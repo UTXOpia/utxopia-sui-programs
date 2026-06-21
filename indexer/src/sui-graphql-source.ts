@@ -23,7 +23,7 @@ import type {
 const KNOWN_EVENT_TYPES = new Set<SuiUtxopiaEventType>([
   "PoolCreated", "PoolPaused", "BtcDepositVerified", "CommitmentInserted",
   "MerkleRootUpdated", "NullifierSpent", "RedemptionRequested", "RedemptionCompleted",
-  "IkaSigningApproved", "VerifyingKeyRegistered", "JoinSplitVerified",
+  "IkaSigningApproved", "VerifyingKeyRegistered", "JoinSplitVerified", "StealthAnnounced",
 ]);
 
 const EVENTS_QUERY = `

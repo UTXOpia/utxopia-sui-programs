@@ -9,7 +9,8 @@ export type SuiUtxopiaEventType =
   | "RedemptionCompleted"
   | "IkaSigningApproved"
   | "VerifyingKeyRegistered"
-  | "JoinSplitVerified";
+  | "JoinSplitVerified"
+  | "StealthAnnounced";
 
 export interface SuiEventCursor {
   checkpoint?: string;

@@ -183,12 +183,16 @@ export function buildExplorerTransactions(
     if (primary.type === "StealthAnnounced") {
       // A generic Coin<T> shield (no JoinSplit, no BTC deposit) — token from the event.
       const { tokenId, tokenSymbol } = resolveToken(stringField(p.token_id));
+      // The shielded amount is public in StealthAnnounced (p.amount) — carry it onto the
+      // output commitment too so it matches the BTC shape and every consumer can read it.
+      const shieldAmount = numberField(p.amount);
       const commitments = txEvents
         .filter((e) => e.type === "CommitmentInserted")
         .map((e) => ({
           type: "commitment",
           commitment: bytesField(e.payload.commitment),
           leafIndex: numberField(e.payload.leaf_index),
+          amount: shieldAmount,
         }));
       txs.push({
         txSignature: txDigest,
@@ -197,7 +201,7 @@ export function buildExplorerTransactions(
         tokenSymbol: tokenSymbol ?? null,
         timestamp,
         status: "confirmed",
-        inputs: [{ amount: numberField(p.amount) }],
+        inputs: [{ grossAmount: shieldAmount, netAmount: shieldAmount, amount: shieldAmount }],
         outputs: commitments.length
           ? commitments
           : [{ type: "commitment", commitment: bytesField(p.commitment), leafIndex: numberField(p.leaf_index), amount: numberField(p.amount) }],

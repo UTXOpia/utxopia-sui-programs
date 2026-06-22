@@ -14,6 +14,7 @@
     "test:regtest:managed:fresh": "bun scripts/regtest.ts run --start --reset-sui --stop-after",
     "regtest:start": "bun scripts/regtest.ts start",
     "regtest:stop": "bun scripts/regtest.ts stop",
+    "faucet:serve": "bun scripts/faucet-server.ts",
     "sync:web-config": "bun scripts/export-web-config.ts",
     "check:web-config": "bun scripts/export-web-config.ts --check"
   },
